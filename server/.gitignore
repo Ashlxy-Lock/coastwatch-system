@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/*.db
+data/*.db-*
+data/official_datasets/
+data/official_registry/
+models/official_runs/
+examples/official_dataset_bundle/raw/*
+!examples/official_dataset_bundle/raw/README.md
+.device_token

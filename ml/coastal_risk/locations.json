@@ -1,0 +1,18 @@
+[
+  {"id":"uk_brighton","name":"Brighton, England, United Kingdom","latitude":50.82838,"longitude":-0.13947},
+  {"id":"uk_portsmouth","name":"Portsmouth, England, United Kingdom","latitude":50.79899,"longitude":-1.09125},
+  {"id":"uk_plymouth","name":"Plymouth, England, United Kingdom","latitude":50.37153,"longitude":-4.14305},
+  {"id":"uk_aberdeen","name":"Aberdeen, Scotland, United Kingdom","latitude":57.14369,"longitude":-2.09814},
+  {"id":"uk_cardiff","name":"Cardiff, Wales, United Kingdom","latitude":51.48,"longitude":-3.18},
+  {"id":"uk_bangor_ni","name":"Bangor, Northern Ireland, United Kingdom","latitude":54.66079,"longitude":-5.66802},
+  {"id":"pt_lisbon","name":"Lisbon, Portugal","latitude":38.72509,"longitude":-9.1498},
+  {"id":"us_new_york","name":"New York, United States","latitude":40.71427,"longitude":-74.00597},
+  {"id":"ca_vancouver","name":"Vancouver, British Columbia, Canada","latitude":49.24966,"longitude":-123.11934},
+  {"id":"br_rio","name":"Rio de Janeiro, Brazil","latitude":-22.90642,"longitude":-43.18223},
+  {"id":"za_cape_town","name":"Cape Town, Western Cape, South Africa","latitude":-33.92584,"longitude":18.42322},
+  {"id":"in_mumbai","name":"Mumbai, Maharashtra, India","latitude":19.07283,"longitude":72.88261},
+  {"id":"sg_singapore","name":"Singapore","latitude":1.28967,"longitude":103.85007},
+  {"id":"jp_tokyo","name":"Tokyo, Japan","latitude":35.6895,"longitude":139.69171},
+  {"id":"au_sydney","name":"Sydney, New South Wales, Australia","latitude":-33.86785,"longitude":151.20732},
+  {"id":"cn_qingdao","name":"Qingdao, Shandong, China","latitude":36.06488,"longitude":120.38042}
+]

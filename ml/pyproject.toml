@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coastwatch-impact"
+version = "0.1.0"
+description = "Leakage-aware CoastWatch ImpactNet v2 research pipeline"
+readme = "README_IMPACTNET.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.1,<3.0",
+  "pandas>=3.0,<4.0",
+  "pyarrow>=25,<26",
+  "scikit-learn>=1.6,<2.0",
+  "scipy>=1.15,<2.0",
+  "pydantic>=2.12,<3.0",
+  "PyYAML>=6,<7",
+  "typer>=0.21,<1.0",
+  "httpx>=0.28,<1.0",
+  "tenacity>=9,<10",
+  "torch>=2.9,<3.0",
+  "safetensors>=0.7,<1.0",
+  "matplotlib>=3.10,<4.0",
+]
+
+[project.optional-dependencies]
+serve = ["fastapi>=0.141,<0.142", "uvicorn[standard]>=0.52,<0.53"]
+dev = [
+  "pytest>=9,<10",
+  "pytest-cov>=7,<8",
+  "ruff>=0.14,<1.0",
+  "mypy>=1.19,<3.0",
+]
+geo = ["geopandas>=1.1,<2.0", "shapely>=2.1,<3.0", "pyproj>=3.7,<4.0", "rasterio>=1.4,<2.0"]
+marine = ["xarray>=2025.0", "netCDF4>=1.7,<2.0", "zarr>=3,<4", "copernicusmarine>=2,<3"]
+onnx = ["onnx>=1.19,<2.0", "onnxruntime>=1.23,<2.0"]
+
+[project.scripts]
+cwml = "coastwatch_impact.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["coastwatch_impact*"]
+exclude = ["coastal_risk*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+markers = [
+  "full_e2e: runs the required 180-day, two-epoch CPU engineering acceptance path",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["coastwatch_impact"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_unused_ignores = false
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = [
+  "geopandas.*",
+  "onnx.*",
+  "onnxruntime.*",
+  "pandas.*",
+  "pyarrow.*",
+  "safetensors.*",
+  "sklearn.*",
+  "xarray.*",
+  "yaml.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["coastwatch_impact.data.sources.*"]
+disable_error_code = ["override"]

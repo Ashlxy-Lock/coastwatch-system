@@ -1,0 +1,53 @@
+{
+  "past_feature_names": [
+    "water_level_m_aod",
+    "predicted_tide_m_aod",
+    "surge_residual_m",
+    "significant_wave_height_m",
+    "wave_period_s",
+    "wind_speed_m_s",
+    "wind_gust_m_s",
+    "surface_pressure_hpa",
+    "rainfall_mm_h",
+    "air_temperature_c",
+    "humidity_percent"
+  ],
+  "future_feature_names": [
+    "forecast_total_water_level_m_aod",
+    "forecast_tide_m_aod",
+    "forecast_surge_m",
+    "forecast_wave_height_m",
+    "forecast_wave_period_s",
+    "forecast_wind_speed_m_s",
+    "forecast_wind_gust_m_s",
+    "forecast_pressure_hpa",
+    "forecast_rainfall_mm_h"
+  ],
+  "static_feature_names": [
+    "latitude",
+    "longitude",
+    "coastal_orientation_sin",
+    "coastal_orientation_cos",
+    "ground_elevation_m_aod",
+    "defence_crest_height_m_aod",
+    "distance_to_coast_m",
+    "historic_flood_fraction",
+    "low_lying_area_fraction",
+    "road_exposure_count",
+    "building_exposure_count"
+  ],
+  "water_target_column": "water_level_m_aod",
+  "physics_baseline_column": "forecast_total_water_level_m_aod",
+  "source_model": "synthetic_issued_model",
+  "future_feature_sources": {
+    "forecast_total_water_level_m_aod": "synthetic_issued_model",
+    "forecast_tide_m_aod": "synthetic_issued_model",
+    "forecast_surge_m": "synthetic_issued_model",
+    "forecast_wave_height_m": "synthetic_issued_model",
+    "forecast_wave_period_s": "synthetic_issued_model",
+    "forecast_wind_speed_m_s": "synthetic_issued_model",
+    "forecast_wind_gust_m_s": "synthetic_issued_model",
+    "forecast_pressure_hpa": "synthetic_issued_model",
+    "forecast_rainfall_mm_h": "synthetic_issued_model"
+  }
+}

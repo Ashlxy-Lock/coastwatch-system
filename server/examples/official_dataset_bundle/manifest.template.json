@@ -1,0 +1,105 @@
+{
+  "schema": "coastwatch.uk-official-dataset",
+  "schema_version": 1,
+  "data_origin": "uk_official_archive",
+  "dataset_id": "replace-with-globally-version-qualified-dataset-id-v1",
+  "version": "v1",
+  "sources": [
+    {
+      "name": "REPLACE WITH SOURCE DATASET NAME",
+      "owner": "REPLACE WITH OFFICIAL DATA OWNER",
+      "citation": "REPLACE WITH REQUIRED CITATION",
+      "license": "REPLACE WITH VERIFIED LICENCE",
+      "source_url": "https://replace.example/official-source",
+      "retrieved_at": "2026-01-01T00:00:00Z",
+      "original_filename": "replace-original-file.ext",
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS"
+    }
+  ],
+  "table": {
+    "format": "csv",
+    "file": "harmonized.csv",
+    "sha256": "REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS",
+    "row_count": 1
+  },
+  "site_ids": [
+    "REPLACE_SITE_01"
+  ],
+  "site_metadata": {
+    "REPLACE_SITE_01": {
+      "name": "REPLACE WITH OFFICIAL SITE NAME",
+      "datum": "REPLACE WITH RECONCILED VERTICAL DATUM",
+      "latitude": 0.0,
+      "longitude": 0.0
+    }
+  },
+  "date_range": {
+    "start": "2022-01-01T00:00:00Z",
+    "end": "2024-12-31T23:00:00Z"
+  },
+  "feature_schema": {
+    "feature_order": [
+      "relative_water_level_m",
+      "predicted_tide_relative_m",
+      "significant_wave_height_m",
+      "wave_period_s",
+      "wind_speed_m_s",
+      "wind_gust_m_s",
+      "surface_pressure_hpa",
+      "rainfall_mm_h",
+      "air_temperature_c",
+      "relative_humidity_percent",
+      "water_temperature_c",
+      "ocean_current_velocity_m_s",
+      "hour_sin",
+      "hour_cos",
+      "day_of_year_sin",
+      "day_of_year_cos",
+      "latitude",
+      "longitude"
+    ],
+    "units": {
+      "relative_water_level_m": "m",
+      "predicted_tide_relative_m": "m",
+      "significant_wave_height_m": "m",
+      "wave_period_s": "s",
+      "wind_speed_m_s": "m/s",
+      "wind_gust_m_s": "m/s",
+      "surface_pressure_hpa": "hPa",
+      "rainfall_mm_h": "mm/h",
+      "air_temperature_c": "degC",
+      "relative_humidity_percent": "%",
+      "water_temperature_c": "degC",
+      "ocean_current_velocity_m_s": "m/s",
+      "hour_sin": "unitless",
+      "hour_cos": "unitless",
+      "day_of_year_sin": "unitless",
+      "day_of_year_cos": "unitless",
+      "latitude": "degree",
+      "longitude": "degree"
+    }
+  },
+  "label_definition": {
+    "column": "target_extreme_water",
+    "positive_class": 1,
+    "target_time_relation": "future",
+    "forecast_horizon_hours": 6,
+    "derivation": "REPLACE WITH EXACT FUTURE-LABEL DERIVATION",
+    "official_reference": "REPLACE WITH OFFICIAL OR DOCUMENTED HIGH-WATER REFERENCE"
+  },
+  "splits": {
+    "train": {
+      "start": "2022-01-01T00:00:00Z",
+      "end": "2023-06-30T23:00:00Z"
+    },
+    "validation": {
+      "start": "2023-07-02T00:00:00Z",
+      "end": "2023-12-31T23:00:00Z"
+    },
+    "frozen_test": {
+      "start": "2024-01-02T00:00:00Z",
+      "end": "2024-12-31T23:00:00Z"
+    },
+    "leakage_gap_hours": 24
+  }
+}

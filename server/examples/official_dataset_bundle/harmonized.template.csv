@@ -1,0 +1,2 @@
+timestamp,site_id,storm_group_id,target_extreme_water,relative_water_level_m,predicted_tide_relative_m,significant_wave_height_m,wave_period_s,wind_speed_m_s,wind_gust_m_s,surface_pressure_hpa,rainfall_mm_h,air_temperature_c,relative_humidity_percent,water_temperature_c,ocean_current_velocity_m_s,hour_sin,hour_cos,day_of_year_sin,day_of_year_cos,latitude,longitude
+2024-01-02T00:00:00Z,REPLACE_SITE_01,REPLACE_EVENT_001,0,0.0,0.0,0.0,0.0,0.0,0.0,1000.0,0.0,10.0,80.0,10.0,0.0,0.0,1.0,0.017166329755,0.999852647705,0.0,0.0

@@ -1,0 +1,30 @@
+sources:
+  ea_historic_warnings:
+    owner: Environment Agency
+    url: https://environment.data.gov.uk/dataset/88bed270-d465-11e4-8669-f0def148f590
+    access: manual_import
+  ea_warning_areas:
+    owner: Environment Agency
+    url: https://environment.data.gov.uk/dataset/87e5d78f-d465-11e4-9343-f0def148f590
+    access: manual_import
+  ea_tide:
+    owner: Environment Agency
+    url: https://environment.data.gov.uk/flood-monitoring/doc/tidegauge
+    access: api_or_archive
+  wavenet:
+    owner: Cefas
+    url: https://www.cefas.co.uk/data-and-publications/wavenet/
+    access: manual_archive_preferred
+  ntslf:
+    owner: National Tidal and Sea Level Facility
+    url: https://ntslf.org/storm-surges/surge-model
+    access: manual_issued_forecast_archive
+  met_office:
+    owner: Met Office
+    url: https://datahub.metoffice.gov.uk/
+    access: api_key
+  copernicus_marine:
+    owner: Copernicus Marine
+    url: https://data.marine.copernicus.eu/
+    access: authenticated_optional
+

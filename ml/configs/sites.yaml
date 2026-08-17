@@ -1,0 +1,26 @@
+source: coastal_risk/locations.json
+storage_crs: EPSG:4326
+distance_crs: EPSG:27700
+sites:
+  uk_brighton:
+    active_candidate: true
+    approved: false
+    review_note: Requires EA Flood Warning Area and gauge mapping review.
+  uk_portsmouth:
+    active_candidate: true
+    approved: false
+    review_note: Requires EA Flood Warning Area and gauge mapping review.
+  uk_plymouth:
+    active_candidate: true
+    approved: false
+    review_note: Requires EA Flood Warning Area and gauge mapping review.
+  uk_aberdeen:
+    active_candidate: false
+    exclusion_reason: Scotland requires a SEPA label adapter.
+  uk_cardiff:
+    active_candidate: false
+    exclusion_reason: Wales requires a Natural Resources Wales label adapter.
+  uk_bangor_ni:
+    active_candidate: false
+    exclusion_reason: Northern Ireland requires a DfI Rivers label adapter.
+
