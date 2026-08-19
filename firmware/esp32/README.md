@@ -5,8 +5,8 @@ OpenMV VIS、驱动超声波、建立稳定基准、计算水位变化/变化率
 再把同一份 `TelemetryFrame` 同时交给 LCD 与服务器。服务器模型可以切换
 OpenMV 的人体检测采样模式，但不能降低、覆盖或控制设备本地报警规则。
 
-`firmware/stm32` 保留为已验证的回滚版本，但正常单板路径不再通过 STM32
-`TEL/NET` 串口。2026-08-18 已完成 ECHO 分压、单板烧录和端到端实机验证。
+当前运行架构只有 OpenMV、ESP32-S3 和服务器。2026-08-18 已完成 ECHO 分压、
+单板烧录和端到端实机验证。
 
 ## 硬件目标
 
@@ -28,8 +28,8 @@ OpenMV 的人体检测采样模式，但不能降低、覆盖或控制设备本�
 ESP32-S3 没有任何 5 V-tolerant GPIO。HC-SR04 ECHO 必须经过核验的分压或
 经过核验的电平转换器；改接其他 GPIO、ADC 或下载串口都不能绕过这一限制。
 没有转换器时不得接 ECHO、不得启用单板超声。GPIO12 已由触摸 INT 占用，
-GPIO35/36/37 被 N16R8 Octal PSRAM 使用，也不得复用。完整接线和迁移顺序见
-`docs/ESP32_SINGLE_BOARD_MIGRATION.md`。
+GPIO35/36/37 被 N16R8 Octal PSRAM 使用，也不得复用。完整接线和当前架构见
+[docs/architecture.md](../../docs/architecture.md)。
 
 ## 配置
 

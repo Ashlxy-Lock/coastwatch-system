@@ -35,9 +35,9 @@ constexpr Presentation presentation(const TelemetryFrame &telemetry) {
 }  // namespace ultrasonic_ui
 
 // health_flags bit 0 is the authoritative indication that the ultrasonic
-// value in a locally generated or legacy TEL frame is valid. Keep the
-// publication timestamp as well: a formerly healthy value must never remain
-// visible if the local sensor runtime stops publishing.
+// value in a locally generated telemetry frame is valid. Keep the publication
+// timestamp as well: a formerly healthy value must never remain visible if the
+// local sensor runtime stops publishing.
 constexpr uint32_t kTelemetryHealthUltrasonicOk = 1U << 0U;
 constexpr uint32_t kTelemetryUltrasonicMinimumMm = 20U;
 constexpr uint32_t kTelemetryUltrasonicMaximumMm = 4000U;

@@ -271,19 +271,19 @@ void invalidateWifiRendering() {
   wifi_rendered_error = static_cast<WifiSetupError>(UINT8_MAX);
 }
 
-void logInvalidVisionFrame(TelParseResult result) {
+void logInvalidVisionFrame(FrameParseResult result) {
   ++invalid_vision_frames;
   if (invalid_vision_frames <= 5U || invalid_vision_frames % 25U == 0U) {
     Serial.printf("[OPENMV] dropped VIS frame reason=%s invalid_total=%lu\n",
-                  telParseResultName(result),
+                  frameParseResultName(result),
                   static_cast<unsigned long>(invalid_vision_frames));
   }
 }
 
 void processVisionLine(const char *line) {
   VisionFrame vision{};
-  const TelParseResult result = parseVisionFrame(line, &vision);
-  if (result != TelParseResult::kOk) {
+  const FrameParseResult result = parseVisionFrame(line, &vision);
+  if (result != FrameParseResult::kOk) {
     logInvalidVisionFrame(result);
     return;
   }
@@ -453,7 +453,7 @@ void publishLocalTelemetryIfDue(uint32_t now_ms) {
   have_latest_telemetry = true;
 
   Serial.printf(
-      "[LOCAL] TEL seq=%lu distance=%lu rise=%ld rate=%ld person=%u "
+      "[LOCAL] TELEMETRY seq=%lu distance=%lu rise=%ld rate=%ld person=%u "
       "alarm=%u health=0x%lX\n",
       static_cast<unsigned long>(telemetry.seq),
       static_cast<unsigned long>(telemetry.distance_mm),

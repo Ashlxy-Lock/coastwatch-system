@@ -62,7 +62,6 @@ def test_dashboard_consumes_server_side_dataset_and_readiness_contracts() -> Non
     )
     assert all(route in DASHBOARD_HTML for route in required_routes)
     assert "ESP32 ultrasonic measurement → server storage" in DASHBOARD_HTML
-    assert "STM32 measurement" not in DASHBOARD_HTML
     assert "['Power monitoring',4,false]" in DASHBOARD_HTML
     assert "${name} NOT CONFIGURED" in DASHBOARD_HTML
     assert "Unlabelled samples remain UNKNOWN" in DASHBOARD_HTML

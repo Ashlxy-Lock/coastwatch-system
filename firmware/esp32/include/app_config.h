@@ -97,7 +97,6 @@ constexpr const char *kLocationPresetsPath = "/api/v1/locations/presets";
 constexpr const char *kLocationSearchPath = "/api/v1/locations/search";
 constexpr const char *kDeviceLocationPath = "/api/v1/device-location";
 
-constexpr uint32_t kNetFrameIntervalMs = 1000;
 constexpr uint32_t kTelemetryUploadIntervalMs = 2000;
 // Simulation collection is deliberately faster, but still uploads only the
 // freshest complete local sensor frame. Sensing never waits for this cadence.

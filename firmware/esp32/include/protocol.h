@@ -3,9 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "telemetry.h"
-
-enum class TelParseResult : uint8_t {
+enum class FrameParseResult : uint8_t {
   kOk = 0,
   kNullArgument,
   kBadEnvelope,
@@ -29,13 +27,8 @@ struct VisionFrame {
 };
 
 uint8_t protocolXor(const char *data, size_t length);
-TelParseResult parseTelFrame(const char *frame, TelemetryFrame *telemetry);
-TelParseResult parseVisionFrame(const char *frame, VisionFrame *vision);
-const char *telParseResultName(TelParseResult result);
-
-bool buildNetFrame(char *output, size_t output_size, bool wifi_connected,
-                   bool server_reachable, int32_t rssi,
-                   uint32_t unix_time);
+FrameParseResult parseVisionFrame(const char *frame, VisionFrame *vision);
+const char *frameParseResultName(FrameParseResult result);
 
 // ESP32 -> OpenMV camera-mode control. The strict wire format is:
 //   $CTL,<seq>,<danger>,<person_enable>,<environmental_level>*<XOR>\r\n

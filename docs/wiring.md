@@ -1,78 +1,74 @@
-# 接线：当前单板与三板回滚
+# 接线：ESP32-S3 + OpenMV + HC-SR04
 
-本文记录当前已启用的 ESP32-S3 单主控接线，以及可回滚的历史三板接线。
-所有 UART 均为 `115200, 8N1` 和 3.3 V TTL。
+更新时间：2026-08-19
 
-## 2026-08-18 迁移状态
+所有改线必须在 ESP32、OpenMV 和超声波全部断电时进行。UART 使用
+`115200, 8N1`、3.3 V TTL；所有模块必须共地。
 
-当前单板接线为 `OpenMV P4/TX → GPIO8`、`TRIG → GPIO10`、
-`ECHO → 5V-to-3.3V 分压 → GPIO40`。GPIO42 已由 LCD D/C 占用，不能复用。
-ESP32-S3 没有耐 5 V GPIO；ECHO 现已通过 2×220Ω 上臂和 3×220Ω 下臂分压，
-禁止绕过该分压直接接 ESP32。
-完整切换步骤见 `docs/ESP32_SINGLE_BOARD_MIGRATION.md`。
-
-以下章节是可运行的历史回滚接线，不代表当前实物路径。
-
-## OpenMV 到 STM32
+## 完整接线
 
 ```text
-OpenMV P4 / UART3 TX  ──▶  STM32 PB11 / USART3 RX
-OpenMV P5 / UART3 RX  ◀──  STM32 PB10 / USART3 TX（当前可不接）
-OpenMV GND             ───  STM32 GND
+OpenMV P4 / UART3 TX ─────────────▶ ESP32 GPIO8  / UART1 RX   (VIS)
+OpenMV P5 / UART3 RX ◀───────────── ESP32 GPIO14 / UART1 TX   (CTL)
+OpenMV GND           ─────────────── ESP32 GND
+
+HC-SR04 VCC          ─────────────── 稳定 5V
+HC-SR04 GND          ─────────────── 公共 GND
+HC-SR04 TRIG         ◀────────────── ESP32 GPIO10
+HC-SR04 ECHO ──220Ω──220Ω──┬──────▶ ESP32 GPIO40
+                           │
+                         220Ω
+                           │
+                         220Ω
+                           │
+                         220Ω
+                           │
+                          GND
 ```
 
-## STM32 到 ESP32
+OpenMV 的 P4/GPIO8 上行和 P5/GPIO14 下行都是现行运行路径的必接线。只接 P4
+虽然仍可能上传 `VIS`，但 OpenMV 无法接收 `CTL`，因而不能按模型/本地警戒切换
+检测频率或正确显示绿、黄、红状态灯。
 
-```text
-STM32 PA2 / USART2 TX  ──▶  ESP32 GPIO8 / UART1 RX
-STM32 PA3 / USART2 RX  ◀──  ESP32 GPIO14 / UART1 TX
-STM32 GND              ───  ESP32 GND
-```
+## ECHO 分压
 
-ESP32 的 UART 通过 GPIO Matrix 映射到 GPIO8/14。这两个脚避开了：
+HC-SR04 ECHO 约为 5 V，而 ESP32-S3 没有任何耐 5 V GPIO。现行分压由：
 
-- GPIO43/44 的下载和调试串口；
-- GPIO19/20 的原生 USB；
-- GPIO35/36/37 的 Octal PSRAM；
-- GPIO38 的板载 WS2812B；
-- 当前 TK043F1509 800×480 并口屏和 FT5x06 I2C 触摸的现有占用。
+- ECHO 到 GPIO40 的上臂：两只 220Ω 串联，共 440Ω；
+- GPIO40 到 GND 的下臂：三只 220Ω 串联，共 660Ω。
 
-GPIO12 已由屏幕转接板硬接为触摸中断，禁止再接 STM32 TX。当前固件和
-实物统一使用 GPIO8 作为 ESP32 UART1 RX。
+组成。理想输出约为 `5V × 660 / (440 + 660) = 3.0V`。上电前应使用万用表确认
+分压节点不超过 3.3 V，确认后才允许把节点接到 GPIO40。单独串联一个电阻、
+改用 ADC attenuation、换到其他 GPIO 或使用继电器都不能代替正确的电平转换。
 
-## TRIG/ECHO 超声波到 STM32
+## 已占用或禁止复用的 ESP32 引脚
 
-```text
-超声波 VCC       ───  STM32 5V
-超声波 GND       ───  STM32 GND
-超声波 TRI/TRIG  ──▶  STM32 PC10 / GPIO 输出
-超声波 ECH/ECHO  ──▶  STM32 PC11 / EXTI 输入
-```
+- GPIO42：LCD D/C；
+- GPIO12：触摸 INT；
+- GPIO20 / GPIO13：触摸 I2C SDA / SCL；
+- GPIO35 / GPIO36 / GPIO37：N16R8 Octal PSRAM；
+- GPIO38：板载 WS2812B；
+- GPIO43 / GPIO44：下载与调试串口。
 
-PC10/PC11 不占用 OpenMV 的 PB10/PB11，也不占用 ESP32 链路的 PA2/PA3。
-STM32F103ZE 数据手册把 PC11 标为 5 V tolerant；当前直接接线仅适用于常规
-ECHO 不超过 5 V 的模块，并要求 STM32 已正常供电和共地。永久安装仍建议增加
-电阻分压或电平转换。不要把 ECHO 直接移动到未经核对的其他 GPIO。
-
-对应回滚驱动位于 `firmware/stm32`：PC10 产生 10 us 触发脉冲，PC11 双沿中断
-配合 1 MHz TIM2 计算脉宽。该历史固件已构建并烧录验证，但当前正常路径不使用它。
+不得把 ECHO、OpenMV UART 或临时跳线移到这些引脚。
 
 ## 供电
 
-- 首次联调让三块板分别从各自 USB 或稳定 5 V 输入供电，只连接信号和公共地。
-- 不要并接多个模块的 5 V 输出，也不要从 STM32 3.3 V 引脚给 ESP32 供电。
-- 除明确核对为 5 V tolerant 的 PC11 ECHO 输入外，不得向 STM32、OpenMV 或
-  ESP32 GPIO 输入 5 V；即使是 PC11，永久安装也优先使用分压或电平转换。
-- ESP32 首次烧录和看日志使用开发板上标注 `UART` 或 `USB-to-UART` 的 USB-C 口。
+- ESP32 与 OpenMV 使用各自正常 USB/电源入口；HC-SR04 使用稳定 5 V。
+- ESP32、OpenMV、HC-SR04 和外部 5 V 电源负极必须共地。
+- 不得从 GPIO 给其他模块供电，不得把 5 V 接到任何 ESP32 或 OpenMV GPIO。
+- 不要并接两个独立电源的 5 V 正极；只连接经过确认的公共地。
 
-## 首次联调顺序
+## 上电与联调顺序
 
-1. 保持已验证的 OpenMV 到 STM32 接线不动。
-2. 只用 USB 给 ESP32 供电并烧录网关程序，确认启动日志。
-3. 断电后连接 PA2、PA3、PC10、PC11 和公共 GND，再给各板正确供电。
-4. 用 ST-Link 读回并保存原 STM32 Flash、option bytes 和 SHA-256；读回失败时停止，
-   不得解除读保护。
-5. 烧录并复位后，ESP32 日志应每 500 ms 收到一帧 `TEL`；物体靠近探头时
-   `distance_mm` 下降、`water_rise_mm` 上升，人员进出画面时 `person` 随之变化。
-6. ESP32 每秒返回一帧 `NET`；没有配置 Wi-Fi 时应稳定返回离线状态，而不是阻塞。
-7. 拔掉 ESP32 或关闭 Wi-Fi，STM32 的传感器处理和本地状态计算必须继续运行。
+1. 全部断电，先连接所有 GND。
+2. 连接 OpenMV P4→GPIO8、GPIO14→OpenMV P5，两根信号线均不要省略。
+3. 按图搭好超声分压；先不接 GPIO40，用万用表测量分压节点。
+4. 确认节点不超过 3.3 V 后断电，再连接 GPIO40，并连接 TRIG→GPIO10。
+5. 使用 `esp32s3-n16r8-singleboard` 环境烧录 ESP32；普通环境不会启用超声引脚。
+6. 把 `main.py`、`config.py`、`control.py`、`protocol.py`、
+   `vision_detector.py` 放到 OpenMV 存储根目录并启动 `main.py`。
+7. 检查 ESP32 日志出现新鲜 OpenMV 帧、超声 `armed=1/healthy=1` 和本地遥测；
+   再确认服务器 POST 成功、LCD 数值随目标距离变化。
+8. 分别验证：完整安全时绿闪；警戒且无人时黄闪；警戒且检测到人时红闪；
+   断网时本地超声、视觉健康检查和报警规则仍持续运行。
