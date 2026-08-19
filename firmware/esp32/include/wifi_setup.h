@@ -6,6 +6,7 @@
 constexpr size_t kWifiCatalogCapacity = 12U;
 constexpr size_t kWifiSsidBytes = 33U;
 constexpr size_t kWifiPasswordBytes = 65U;
+constexpr size_t kWifiSavedProfileCapacity = 16U;
 
 enum class WifiSetupState : uint8_t {
   kIdle = 0,
@@ -46,6 +47,8 @@ struct WifiNetworkOption {
   uint8_t auth_mode{0U};
   bool secured{true};
   bool supported{false};
+  bool saved{false};
+  bool saved_usable{false};
 };
 
 struct WifiCatalog {
@@ -54,7 +57,11 @@ struct WifiCatalog {
   WifiSetupState state{WifiSetupState::kIdle};
   uint32_t revision{0U};
   WifiSetupError error{WifiSetupError::kNone};
+  size_t saved_count{0U};
+  // active_ssid is the preferred reconnect profile. connected_ssid is set
+  // only while the station actually owns an IP connection.
   char active_ssid[kWifiSsidBytes]{};
+  char connected_ssid[kWifiSsidBytes]{};
 };
 
 // Shared 800x480 Wi-Fi-list geometry. Display rendering and touch handling

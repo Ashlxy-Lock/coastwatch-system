@@ -15,6 +15,7 @@
 #include <time.h>
 
 #include "app_config.h"
+#include "wifi_profile_store.h"
 
 namespace {
 
@@ -25,6 +26,7 @@ extern const uint8_t x509_crt_bundle_start[]
 
 constexpr size_t kLocationCatalogMaxJsonBytes = 4096U;
 constexpr uint32_t kWifiCandidateTimeoutMs = 30U * 1000U;
+constexpr uint32_t kWifiSavedProfileAttemptTimeoutMs = 30U * 1000U;
 constexpr uint32_t kWifiCandidateDisconnectTimeoutMs = 3U * 1000U;
 constexpr uint32_t kWifiStaResetMs = 100U;
 constexpr uint32_t kWifiScanDisconnectSettleMs = 400U;
@@ -36,9 +38,8 @@ constexpr uint32_t kWifiScanMaxMsPerChannel = 200U;
 constexpr uint8_t kWifiScanMaxAttempts = 3U;
 constexpr uint8_t kWifiScanMaxStartRecoveries = 3U;
 constexpr char kWifiPreferencesNamespace[] = "coast-net";
-constexpr char kWifiPreferencesKey[] = "profile";
-constexpr uint32_t kWifiProfileMagic = 0x434F4153U;  // "COAS"
-constexpr uint16_t kWifiProfileVersion = 1U;
+constexpr char kWifiProfilesPreferencesKey[] = "profiles2";
+constexpr char kLegacyWifiPreferencesKey[] = "profile";
 
 enum class WifiScanPhase : uint8_t {
   kIdle = 0,
@@ -164,23 +165,12 @@ WifiSetupError classifyWifiConnectionFailure(uint8_t reason,
   }
 }
 
-struct StoredWifiProfile {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t size;
-  char ssid[kWifiSsidBytes];
-  char password[kWifiPasswordBytes];
-  uint32_t checksum;
-};
-
-enum class StoredWifiProfileState : uint8_t {
+enum class StoredWifiProfilesState : uint8_t {
   kAbsent = 0,
   kConfigured,
+  kEmpty,
   kBlocked,
 };
-
-static_assert(sizeof(StoredWifiProfile) <= 128U,
-              "Wi-Fi NVS profile unexpectedly large");
 
 bool hasText(const char *value) { return value != nullptr && value[0] != '\0'; }
 
@@ -206,8 +196,7 @@ bool validStoredWifiPassword(const char *password) {
 }
 
 bool validSecuredWifiPassword(const char *password) {
-  const size_t length = boundedTextLength(password, kWifiPasswordBytes);
-  return length >= 8U && length <= 63U;
+  return wifiSecuredPasswordValid(password);
 }
 
 void copyFixedText(char *destination, size_t destination_size,
@@ -234,101 +223,88 @@ void clearSensitiveText(char *text, size_t length) {
   }
 }
 
-uint32_t profileChecksum(const StoredWifiProfile &profile) {
-  const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&profile);
-  uint32_t hash = 2166136261U;
-  for (size_t index = 0U; index < offsetof(StoredWifiProfile, checksum);
-       ++index) {
-    hash ^= bytes[index];
-    hash *= 16777619U;
-  }
-  return hash;
-}
-
-StoredWifiProfileState loadStoredWifiProfile(
-    char *ssid, size_t ssid_size, char *password, size_t password_size) {
-  Preferences preferences;
-  // Read-write mode creates the namespace on a brand-new board, which lets
-  // isKey() distinguish a genuine first boot from an unreadable NVS failure.
-  if (!preferences.begin(kWifiPreferencesNamespace, false)) {
-    // Fail closed: an unreadable NVS namespace must not silently revive the
-    // firmware's build-time Wi-Fi credentials.
-    return StoredWifiProfileState::kBlocked;
-  }
-  const bool profile_present = preferences.isKey(kWifiPreferencesKey);
-  if (!profile_present) {
-    preferences.end();
-    return StoredWifiProfileState::kAbsent;
-  }
-  const size_t stored_size = preferences.getBytesLength(kWifiPreferencesKey);
-  StoredWifiProfile profile{};
-  const size_t read_size =
-      stored_size == sizeof(profile)
-          ? preferences.getBytes(kWifiPreferencesKey, &profile, sizeof(profile))
-          : 0U;
-  preferences.end();
-
-  const bool valid_envelope =
-      read_size == sizeof(profile) && profile.magic == kWifiProfileMagic &&
-      profile.version == kWifiProfileVersion &&
-      profile.size == sizeof(profile) &&
-      validStoredWifiPassword(profile.password) &&
-      profile.checksum == profileChecksum(profile);
-  const bool configured = valid_envelope && validWifiSsid(profile.ssid);
-  if (!configured) {
-    clearSensitiveText(profile.password, sizeof(profile.password));
-    return StoredWifiProfileState::kBlocked;
-  }
-
-  copyFixedText(ssid, ssid_size, profile.ssid);
-  copyFixedText(password, password_size, profile.password);
-  clearSensitiveText(profile.password, sizeof(profile.password));
-  return StoredWifiProfileState::kConfigured;
-}
-
-bool saveStoredWifiProfile(const char *ssid, const char *password) {
-  if (!validWifiSsid(ssid) || !validStoredWifiPassword(password)) {
+bool saveStoredWifiProfiles(const WifiProfileStore &store) {
+  // This function is owned by the single network task. Keep the NVS staging
+  // blob out of that task's stack because a transactional profile clone and
+  // mbedTLS work buffers may otherwise overlap its high-water path.
+  static uint8_t encoded[WifiProfileStore::kEncodedSize]{};
+  clearSensitiveText(reinterpret_cast<char *>(encoded), sizeof(encoded));
+  if (!store.encode(encoded, sizeof(encoded))) {
     return false;
   }
 
-  StoredWifiProfile profile{};
-  profile.magic = kWifiProfileMagic;
-  profile.version = kWifiProfileVersion;
-  profile.size = sizeof(profile);
-  copyFixedText(profile.ssid, sizeof(profile.ssid), ssid);
-  copyFixedText(profile.password, sizeof(profile.password), password);
-  profile.checksum = profileChecksum(profile);
-
   Preferences preferences;
   if (!preferences.begin(kWifiPreferencesNamespace, false)) {
-    clearSensitiveText(profile.password, sizeof(profile.password));
-    return false;
-  }
-  const size_t written =
-      preferences.putBytes(kWifiPreferencesKey, &profile, sizeof(profile));
-  preferences.end();
-  clearSensitiveText(profile.password, sizeof(profile.password));
-  return written == sizeof(profile);
-}
-
-bool saveForgottenWifiProfile() {
-  // A valid empty record is a persistent tombstone. Removing the key would
-  // make the next boot fall back to app_config::kWifiSsid and resurrect the
-  // very network the user asked the device to forget.
-  StoredWifiProfile tombstone{};
-  tombstone.magic = kWifiProfileMagic;
-  tombstone.version = kWifiProfileVersion;
-  tombstone.size = sizeof(tombstone);
-  tombstone.checksum = profileChecksum(tombstone);
-
-  Preferences preferences;
-  if (!preferences.begin(kWifiPreferencesNamespace, false)) {
+    clearSensitiveText(reinterpret_cast<char *>(encoded), sizeof(encoded));
     return false;
   }
   const size_t written = preferences.putBytes(
-      kWifiPreferencesKey, &tombstone, sizeof(tombstone));
+      kWifiProfilesPreferencesKey, encoded, sizeof(encoded));
+  if (written == sizeof(encoded) &&
+      preferences.isKey(kLegacyWifiPreferencesKey)) {
+    // The V2 write is already durable. Failure to remove the obsolete key is
+    // harmless because V2 always has priority on the next boot.
+    preferences.remove(kLegacyWifiPreferencesKey);
+  }
   preferences.end();
-  return written == sizeof(tombstone);
+  clearSensitiveText(reinterpret_cast<char *>(encoded), sizeof(encoded));
+  return written == sizeof(encoded);
+}
+
+StoredWifiProfilesState loadStoredWifiProfiles(WifiProfileStore *store,
+                                               bool *needs_v2_persist) {
+  if (store == nullptr || needs_v2_persist == nullptr) {
+    return StoredWifiProfilesState::kBlocked;
+  }
+  *needs_v2_persist = false;
+  store->clearSecrets();
+
+  Preferences preferences;
+  if (!preferences.begin(kWifiPreferencesNamespace, false)) {
+    return StoredWifiProfilesState::kBlocked;
+  }
+  const char *key = nullptr;
+  bool legacy = false;
+  if (preferences.isKey(kWifiProfilesPreferencesKey)) {
+    key = kWifiProfilesPreferencesKey;
+  } else if (preferences.isKey(kLegacyWifiPreferencesKey)) {
+    key = kLegacyWifiPreferencesKey;
+    legacy = true;
+  } else {
+    preferences.end();
+    return StoredWifiProfilesState::kAbsent;
+  }
+
+  // Startup-only scratch, deliberately static for the same stack-headroom
+  // reason as saveStoredWifiProfiles(). It is wiped before returning.
+  static uint8_t encoded[WifiProfileStore::kEncodedSize]{};
+  clearSensitiveText(reinterpret_cast<char *>(encoded), sizeof(encoded));
+  const size_t stored_size = preferences.getBytesLength(key);
+  const size_t read_size =
+      stored_size <= sizeof(encoded)
+          ? preferences.getBytes(key, encoded, stored_size)
+          : 0U;
+  preferences.end();
+  if (read_size != stored_size || stored_size == 0U) {
+    clearSensitiveText(reinterpret_cast<char *>(encoded), sizeof(encoded));
+    return StoredWifiProfilesState::kBlocked;
+  }
+
+  const WifiProfileDecodeResult decoded =
+      WifiProfileStore::decode(encoded, stored_size, store);
+  clearSensitiveText(reinterpret_cast<char *>(encoded), sizeof(encoded));
+  if (decoded == WifiProfileDecodeResult::kLoaded ||
+      decoded == WifiProfileDecodeResult::kMigratedLegacyV1) {
+    *needs_v2_persist = legacy;
+    return StoredWifiProfilesState::kConfigured;
+  }
+  if (decoded == WifiProfileDecodeResult::kEmpty ||
+      decoded == WifiProfileDecodeResult::kMigratedLegacyV1Empty) {
+    *needs_v2_persist = legacy;
+    return StoredWifiProfilesState::kEmpty;
+  }
+  store->clearSecrets();
+  return StoredWifiProfilesState::kBlocked;
 }
 
 void addWifiScanResult(WifiCatalog *catalog, const String &ssid, int32_t rssi,
@@ -392,6 +368,22 @@ void sortWifiCatalog(WifiCatalog *catalog) {
               }
               return std::strcmp(left.ssid, right.ssid) < 0;
             });
+}
+
+void markSavedWifiOptions(WifiCatalog *catalog,
+                          const WifiProfileStore &profiles) {
+  if (catalog == nullptr) {
+    return;
+  }
+  catalog->saved_count = profiles.count();
+  for (size_t index = 0U; index < catalog->count; ++index) {
+    WifiNetworkOption &option = catalog->options[index];
+    WifiCredentials credentials{};
+    option.saved = profiles.copyForSsid(option.ssid, &credentials);
+    option.saved_usable =
+        option.saved && credentials.secured == option.secured;
+    WifiProfileStore::clearCredentials(&credentials);
+  }
 }
 
 uint32_t unixTimeNow() {
@@ -865,6 +857,8 @@ void NetworkUplink::endWifiSetup() {
   wifi_scan_requested_ = false;
   wifi_scan_cancel_requested_ = true;
   wifi_forget_requested_ = false;
+  pending_wifi_use_saved_ = false;
+  pending_wifi_forget_ssid_[0] = '\0';
   wifi_catalog_.state = WifiSetupState::kIdle;
   wifi_catalog_.error = WifiSetupError::kNone;
   ++wifi_catalog_.revision;
@@ -887,9 +881,13 @@ bool NetworkUplink::requestWifiConnect(const char *ssid,
         break;
       }
     }
+    const bool use_saved_password =
+        option != nullptr && option->saved_usable && option->secured &&
+        (password == nullptr || password[0] == '\0');
     const bool password_valid =
         option != nullptr &&
-        (!option->secured || validSecuredWifiPassword(password));
+        (!option->secured || use_saved_password ||
+         validSecuredWifiPassword(password));
     if (option != nullptr && option->supported &&
         validWifiSsid(option->ssid) && password_valid) {
       copyFixedText(pending_wifi_ssid_, sizeof(pending_wifi_ssid_),
@@ -902,6 +900,7 @@ bool NetworkUplink::requestWifiConnect(const char *ssid,
       }
       pending_wifi_auth_mode_ = option->auth_mode;
       pending_wifi_secured_ = option->secured;
+      pending_wifi_use_saved_ = use_saved_password;
       wifi_setup_active_ = true;
       wifi_connect_requested_ = true;
       wifi_catalog_.state = WifiSetupState::kConnecting;
@@ -924,16 +923,26 @@ bool NetworkUplink::requestWifiConnect(const char *ssid,
   return accepted;
 }
 
-bool NetworkUplink::requestWifiForget() {
+bool NetworkUplink::requestWifiForget(const char *ssid) {
   bool accepted = false;
   portENTER_CRITICAL(&wifi_mux_);
   const bool busy = wifi_catalog_.state == WifiSetupState::kScanning ||
                     wifi_catalog_.state == WifiSetupState::kConnecting ||
                     wifi_catalog_.state == WifiSetupState::kForgetting;
-  if (!busy && !wifi_forget_requested_ &&
-      validWifiSsid(wifi_catalog_.active_ssid)) {
+  bool known_saved = false;
+  if (validWifiSsid(ssid)) {
+    known_saved = std::strcmp(wifi_catalog_.active_ssid, ssid) == 0;
+    for (size_t index = 0U; !known_saved && index < wifi_catalog_.count;
+         ++index) {
+      known_saved = wifi_catalog_.options[index].saved &&
+                    std::strcmp(wifi_catalog_.options[index].ssid, ssid) == 0;
+    }
+  }
+  if (!busy && !wifi_forget_requested_ && known_saved) {
     wifi_setup_active_ = true;
     wifi_forget_requested_ = true;
+    copyFixedText(pending_wifi_forget_ssid_,
+                  sizeof(pending_wifi_forget_ssid_), ssid);
     wifi_catalog_.state = WifiSetupState::kForgetting;
     wifi_catalog_.error = WifiSetupError::kNone;
     ++wifi_catalog_.revision;
@@ -1143,25 +1152,47 @@ void NetworkUplink::taskLoop() {
 
   char active_wifi_ssid[kWifiSsidBytes]{};
   char active_wifi_password[kWifiPasswordBytes]{};
-  const StoredWifiProfileState stored_profile_state = loadStoredWifiProfile(
-      active_wifi_ssid, sizeof(active_wifi_ssid), active_wifi_password,
-      sizeof(active_wifi_password));
+  WifiProfileStore wifi_profiles;
+  bool wifi_profiles_need_persist = false;
+  const StoredWifiProfilesState stored_profile_state =
+      loadStoredWifiProfiles(&wifi_profiles, &wifi_profiles_need_persist);
   const bool loaded_saved_profile =
-      stored_profile_state == StoredWifiProfileState::kConfigured;
-  if (stored_profile_state == StoredWifiProfileState::kAbsent &&
+      stored_profile_state == StoredWifiProfilesState::kConfigured;
+  if (stored_profile_state == StoredWifiProfilesState::kAbsent &&
       validWifiSsid(app_config::kWifiSsid) &&
       validStoredWifiPassword(app_config::kWifiPassword)) {
-    copyFixedText(active_wifi_ssid, sizeof(active_wifi_ssid),
-                  app_config::kWifiSsid);
-    copyFixedText(active_wifi_password, sizeof(active_wifi_password),
-                  app_config::kWifiPassword);
+    const bool secured = hasText(app_config::kWifiPassword);
+    const WifiProfileMutation seeded = wifi_profiles.recordSuccessful(
+        app_config::kWifiSsid, app_config::kWifiPassword, secured);
+    wifi_profiles_need_persist = wifiProfileMutationChanged(seeded);
   }
+  const bool migrating_legacy_store =
+      wifi_profiles_need_persist &&
+      stored_profile_state != StoredWifiProfilesState::kAbsent;
+  if (migrating_legacy_store &&
+      saveStoredWifiProfiles(wifi_profiles)) {
+    wifi_profiles_need_persist = false;
+    Serial.println("[WIFI] migrated credential store to V2");
+  } else if (migrating_legacy_store) {
+    Serial.println(
+        "[WIFI] WARN legacy credential migration deferred after NVS error");
+  }
+
+  WifiCredentials active_profile{};
+  if (wifi_profiles.copyAt(0U, &active_profile)) {
+    copyFixedText(active_wifi_ssid, sizeof(active_wifi_ssid),
+                  active_profile.ssid);
+    copyFixedText(active_wifi_password, sizeof(active_wifi_password),
+                  active_profile.password);
+  }
+  WifiProfileStore::clearCredentials(&active_profile);
   bool wifi_configured = validWifiSsid(active_wifi_ssid);
   const char *wifi_configuration_source =
       loaded_saved_profile
-          ? "nvs"
-          : (stored_profile_state == StoredWifiProfileState::kBlocked
-                 ? "forgotten-or-blocked"
+          ? "nvs-v2-or-migrated"
+          : (stored_profile_state == StoredWifiProfilesState::kBlocked ||
+                     stored_profile_state == StoredWifiProfilesState::kEmpty
+                 ? "empty-or-blocked"
                  : (wifi_configured ? "firmware" : "none"));
 
   WiFi.persistent(false);
@@ -1174,6 +1205,7 @@ void NetworkUplink::taskLoop() {
                                                     : WIFI_AUTH_OPEN);
 
   portENTER_CRITICAL(&wifi_mux_);
+  wifi_catalog_.saved_count = wifi_profiles.count();
   copyFixedText(wifi_catalog_.active_ssid,
                 sizeof(wifi_catalog_.active_ssid), active_wifi_ssid);
   ++wifi_catalog_.revision;
@@ -1196,6 +1228,11 @@ void NetworkUplink::taskLoop() {
   uint32_t next_simulation_recovery_ms = 0U;
   uint32_t last_upload_ms = 0U;
   size_t wifi_retry_index = 0U;
+  size_t next_wifi_profile_index = 0U;
+  size_t wifi_profiles_attempted_in_cycle = 0U;
+  bool saved_profile_attempt_in_progress = false;
+  uint32_t saved_profile_attempt_deadline_ms = 0U;
+  uint32_t saved_profile_attempt_disconnect_revision = 0U;
   size_t http_retry_index = 0U;
   size_t environment_retry_index = 0U;
   size_t risk_retry_index = 0U;
@@ -1230,8 +1267,10 @@ void NetworkUplink::taskLoop() {
   bool candidate_wait_for_disconnect_event = false;
   char candidate_wifi_ssid[kWifiSsidBytes]{};
   char candidate_wifi_password[kWifiPasswordBytes]{};
+  char forget_wifi_ssid[kWifiSsidBytes]{};
   uint8_t candidate_wifi_auth_mode = static_cast<uint8_t>(WIFI_AUTH_OPEN);
   bool candidate_wifi_secured = true;
+  bool candidate_use_saved_password = false;
   bool candidate_was_associated = false;
   uint32_t candidate_disconnect_revision = 0U;
   uint32_t candidate_connected_revision = 0U;
@@ -1268,8 +1307,12 @@ void NetworkUplink::taskLoop() {
         scan_phase == WifiScanPhase::kIdle && !candidate_in_progress) {
       wifi_forget_requested_ = false;
       wifi_connect_requested_ = false;
+      copyFixedText(forget_wifi_ssid, sizeof(forget_wifi_ssid),
+                    pending_wifi_forget_ssid_);
+      pending_wifi_forget_ssid_[0] = '\0';
       clearSensitiveText(pending_wifi_password_,
                          sizeof(pending_wifi_password_));
+      pending_wifi_use_saved_ = false;
       start_forget = true;
     } else if (!cancel_scan && wifi_scan_requested_ && wifi_setup_active_ &&
         scan_phase == WifiScanPhase::kIdle &&
@@ -1287,12 +1330,24 @@ void NetworkUplink::taskLoop() {
                     pending_wifi_password_);
       candidate_wifi_auth_mode = pending_wifi_auth_mode_;
       candidate_wifi_secured = pending_wifi_secured_;
+      candidate_use_saved_password = pending_wifi_use_saved_;
+      pending_wifi_use_saved_ = false;
       clearSensitiveText(pending_wifi_password_,
                          sizeof(pending_wifi_password_));
       start_candidate = true;
     }
     wifi_setup_active = wifi_setup_active_;
     portEXIT_CRITICAL(&wifi_mux_);
+
+    if (saved_profile_attempt_in_progress &&
+        (wifi_setup_active || start_scan || start_candidate || start_forget ||
+         cancel_scan)) {
+      WiFi.disconnect(false, false);
+      saved_profile_attempt_in_progress = false;
+      next_wifi_attempt_ms = now_ms + kWifiScanDisconnectSettleMs;
+      Serial.println(
+          "[WIFI_SETUP] cancelled saved reconnect for setup ownership");
+    }
 
     if (wifi_setup_was_active && !wifi_setup_active) {
       wifi_retry_index = 0U;
@@ -1301,36 +1356,90 @@ void NetworkUplink::taskLoop() {
     }
     wifi_setup_was_active = wifi_setup_active;
 
+    if (start_candidate && candidate_use_saved_password) {
+      WifiCredentials saved_credentials{};
+      const bool loaded = wifi_profiles.copyForSsid(
+          candidate_wifi_ssid, &saved_credentials);
+      const bool compatible =
+          loaded && saved_credentials.secured == candidate_wifi_secured;
+      if (compatible) {
+        copyFixedText(candidate_wifi_password,
+                      sizeof(candidate_wifi_password),
+                      saved_credentials.password);
+      } else {
+        start_candidate = false;
+        setWifiSetupState(WifiSetupState::kError,
+                          WifiSetupError::kInvalidPassword);
+        Serial.println(
+            "[WIFI_SETUP] saved credential missing or security changed");
+      }
+      WifiProfileStore::clearCredentials(&saved_credentials);
+      candidate_use_saved_password = false;
+    }
+
     if (start_forget) {
-      if (saveForgottenWifiProfile()) {
-        const bool disconnect_requested = WiFi.disconnect(false, true);
+      WifiProfileStore updated_profiles;
+      const bool prepared = wifi_profiles.cloneTo(&updated_profiles) &&
+                            updated_profiles.forget(forget_wifi_ssid);
+      if (prepared && saveStoredWifiProfiles(updated_profiles)) {
+        wifi_profiles.swap(&updated_profiles);
+        wifi_profiles_need_persist = false;
+        const bool forgot_connected =
+            WiFi.status() == WL_CONNECTED &&
+            WiFi.SSID().equals(forget_wifi_ssid);
+        const bool disconnect_requested =
+            forgot_connected ? WiFi.disconnect(false, true) : false;
         active_wifi_ssid[0] = '\0';
         clearSensitiveText(active_wifi_password,
                            sizeof(active_wifi_password));
+        WifiCredentials next_profile{};
+        if (wifi_profiles.copyAt(0U, &next_profile)) {
+          copyFixedText(active_wifi_ssid, sizeof(active_wifi_ssid),
+                        next_profile.ssid);
+          copyFixedText(active_wifi_password,
+                        sizeof(active_wifi_password),
+                        next_profile.password);
+        }
+        WifiProfileStore::clearCredentials(&next_profile);
         clearSensitiveText(candidate_wifi_password,
                            sizeof(candidate_wifi_password));
-        wifi_configured = false;
+        wifi_configured = !wifi_profiles.empty();
         wifi_retry_index = 0U;
+        next_wifi_profile_index = 0U;
+        wifi_profiles_attempted_in_cycle = 0U;
+        saved_profile_attempt_in_progress = false;
         server_reachable = false;
         environment_reachable = false;
         markEnvironmentStale();
         portENTER_CRITICAL(&wifi_mux_);
-        wifi_catalog_.active_ssid[0] = '\0';
-        wifi_catalog_.state = WifiSetupState::kForgetting;
+        copyFixedText(wifi_catalog_.active_ssid,
+                      sizeof(wifi_catalog_.active_ssid), active_wifi_ssid);
+        if (forgot_connected) {
+          wifi_catalog_.connected_ssid[0] = '\0';
+        }
+        markSavedWifiOptions(&wifi_catalog_, wifi_profiles);
+        wifi_catalog_.state = forgot_connected
+                                  ? WifiSetupState::kForgetting
+                                  : WifiSetupState::kReady;
         wifi_catalog_.error = WifiSetupError::kNone;
         ++wifi_catalog_.revision;
         portEXIT_CRITICAL(&wifi_mux_);
-        forget_disconnect_in_progress = true;
-        forget_disconnect_deadline_ms =
-            now_ms + kWifiCandidateDisconnectTimeoutMs;
+        forget_disconnect_in_progress = forgot_connected;
+        if (forgot_connected) {
+          forget_disconnect_deadline_ms =
+              now_ms + kWifiCandidateDisconnectTimeoutMs;
+        }
         Serial.printf(
-            "[WIFI_SETUP] tombstone saved; disconnecting old wifi requested=%u\n",
+            "[WIFI_SETUP] forgot ssid='%s' remaining=%u disconnect=%u\n",
+            forget_wifi_ssid, static_cast<unsigned>(wifi_profiles.count()),
             disconnect_requested ? 1U : 0U);
       } else {
         setWifiSetupState(WifiSetupState::kError,
                           WifiSetupError::kForgetFailed);
-        Serial.println("[WIFI_SETUP] ERROR failed to persist forget tombstone");
+        Serial.println(
+            "[WIFI_SETUP] ERROR target missing or profile list save failed");
       }
+      forget_wifi_ssid[0] = '\0';
     }
 
     if (forget_disconnect_in_progress) {
@@ -1339,7 +1448,7 @@ void NetworkUplink::taskLoop() {
         was_connected = false;
         setWifiSetupState(WifiSetupState::kReady, WifiSetupError::kNone);
         Serial.println(
-            "[WIFI_SETUP] saved network forgotten; firmware fallback blocked");
+            "[WIFI_SETUP] saved network forgotten; reconnect list retained");
       } else if (static_cast<int32_t>(
                      now_ms - forget_disconnect_deadline_ms) >= 0) {
         WiFi.mode(WIFI_OFF);
@@ -1644,6 +1753,7 @@ void NetworkUplink::taskLoop() {
                           authentication);
       }
       sortWifiCatalog(&scanned);
+      markSavedWifiOptions(&scanned, wifi_profiles);
       WiFi.scanDelete();
       scan_phase = WifiScanPhase::kIdle;
       publishWifiCatalog(scanned);
@@ -1754,10 +1864,25 @@ void NetworkUplink::taskLoop() {
         candidate_connect_started && connected &&
         WiFi.SSID().equals(candidate_wifi_ssid);
     if (candidate_in_progress && candidate_ssid_matches) {
-      const bool saved = saveStoredWifiProfile(
-          candidate_wifi_ssid,
-          candidate_wifi_secured ? candidate_wifi_password : "");
+      WifiProfileStore updated_profiles;
+      const bool cloned = wifi_profiles.cloneTo(&updated_profiles);
+      const WifiProfileMutation mutation =
+          cloned ? updated_profiles.recordSuccessful(
+                       candidate_wifi_ssid,
+                       candidate_wifi_secured ? candidate_wifi_password : "",
+                       candidate_wifi_secured)
+                 : WifiProfileMutation::kInvalidInput;
+      const bool prepared =
+          cloned && mutation != WifiProfileMutation::kInvalidInput;
+      const bool needs_write =
+          prepared &&
+          (wifiProfileMutationChanged(mutation) ||
+           wifi_profiles_need_persist);
+      const bool saved =
+          prepared && (!needs_write || saveStoredWifiProfiles(updated_profiles));
       if (saved) {
+        wifi_profiles.swap(&updated_profiles);
+        wifi_profiles_need_persist = false;
         copyFixedText(active_wifi_ssid, sizeof(active_wifi_ssid),
                       candidate_wifi_ssid);
         clearSensitiveText(active_wifi_password,
@@ -1768,8 +1893,11 @@ void NetworkUplink::taskLoop() {
         }
         wifi_configured = true;
         portENTER_CRITICAL(&wifi_mux_);
+        markSavedWifiOptions(&wifi_catalog_, wifi_profiles);
         copyFixedText(wifi_catalog_.active_ssid,
                       sizeof(wifi_catalog_.active_ssid), active_wifi_ssid);
+        copyFixedText(wifi_catalog_.connected_ssid,
+                      sizeof(wifi_catalog_.connected_ssid), active_wifi_ssid);
         wifi_catalog_.state = WifiSetupState::kConnected;
         wifi_catalog_.error = WifiSetupError::kNone;
         ++wifi_catalog_.revision;
@@ -1779,12 +1907,17 @@ void NetworkUplink::taskLoop() {
         clearSensitiveText(candidate_wifi_password,
                            sizeof(candidate_wifi_password));
         wifi_retry_index = 0U;
+        next_wifi_profile_index = 0U;
+        wifi_profiles_attempted_in_cycle = 0U;
+        saved_profile_attempt_in_progress = false;
         http_retry_index = 0U;
         environment_retry_index = 0U;
         next_http_attempt_ms = now_ms;
         next_environment_attempt_ms = now_ms;
-        Serial.printf("[WIFI_SETUP] connected and saved ssid='%s'\n",
-                      active_wifi_ssid);
+        Serial.printf(
+            "[WIFI_SETUP] connected and saved ssid='%s' profiles=%u\n",
+            active_wifi_ssid,
+            static_cast<unsigned>(wifi_profiles.count()));
       } else {
         WiFi.disconnect(false, false);
         candidate_in_progress = false;
@@ -1841,13 +1974,77 @@ void NetworkUplink::taskLoop() {
         !wifi_connect_requested_ && !wifi_forget_requested_;
     portEXIT_CRITICAL(&wifi_mux_);
 
+    if (saved_profile_attempt_in_progress) {
+      if (connected) {
+        saved_profile_attempt_in_progress = false;
+      } else {
+        const WifiEventSnapshot reconnect_events = wifiEventSnapshot();
+        const wl_status_t reconnect_status = WiFi.status();
+        const bool failure_event_seen =
+            reconnect_events.disconnected_revision !=
+            saved_profile_attempt_disconnect_revision;
+        // A terminal status can linger from the previous profile for a short
+        // time after WiFi.begin(). Only trust it after this attempt produces
+        // its own disconnect event; otherwise give WPA/DHCP the full timeout.
+        const bool terminal_failure =
+            failure_event_seen &&
+            (reconnect_status == WL_CONNECT_FAILED ||
+             reconnect_status == WL_NO_SSID_AVAIL);
+        const bool timed_out = static_cast<int32_t>(
+                                   now_ms -
+                                   saved_profile_attempt_deadline_ms) >= 0;
+        if (terminal_failure || timed_out) {
+          WiFi.disconnect(false, false);
+          saved_profile_attempt_in_progress = false;
+          ++next_wifi_profile_index;
+          ++wifi_profiles_attempted_in_cycle;
+          if (next_wifi_profile_index >= wifi_profiles.count()) {
+            next_wifi_profile_index = 0U;
+          }
+          if (wifi_profiles_attempted_in_cycle < wifi_profiles.count()) {
+            next_wifi_attempt_ms = now_ms + kWifiScanDisconnectSettleMs;
+          } else {
+            wifi_profiles_attempted_in_cycle = 0U;
+            next_wifi_attempt_ms = now_ms + nextBackoff(&wifi_retry_index);
+          }
+          Serial.printf(
+              "[WIFI] saved profile failed status=%d timeout=%u; next=%u/%u\n",
+              static_cast<int>(reconnect_status), timed_out ? 1U : 0U,
+              static_cast<unsigned>(next_wifi_profile_index + 1U),
+              static_cast<unsigned>(wifi_profiles.count()));
+        }
+      }
+    }
+
     if (wifi_configured && !connected && !wifi_radio_busy &&
-        saved_reconnect_allowed &&
+        saved_reconnect_allowed && !saved_profile_attempt_in_progress &&
         static_cast<int32_t>(now_ms - next_wifi_attempt_ms) >= 0) {
-      Serial.printf("[WIFI] connecting to SSID '%s'\n", active_wifi_ssid);
-      WiFi.setMinSecurity(hasText(active_wifi_password) ? WIFI_AUTH_WPA_PSK
-                                                       : WIFI_AUTH_OPEN);
-      WiFi.begin(active_wifi_ssid, active_wifi_password);
+      if (next_wifi_profile_index >= wifi_profiles.count()) {
+        next_wifi_profile_index = 0U;
+      }
+      WifiCredentials reconnect_profile{};
+      const bool have_reconnect_profile =
+          wifi_profiles.copyAt(next_wifi_profile_index, &reconnect_profile);
+      if (!have_reconnect_profile) {
+        wifi_configured = false;
+        WifiProfileStore::clearCredentials(&reconnect_profile);
+        continue;
+      }
+      Serial.printf(
+          "[WIFI] connecting profile=%u/%u ssid='%s'\n",
+          static_cast<unsigned>(next_wifi_profile_index + 1U),
+          static_cast<unsigned>(wifi_profiles.count()), reconnect_profile.ssid);
+      WiFi.setMinSecurity(reconnect_profile.secured ? WIFI_AUTH_WPA_PSK
+                                                    : WIFI_AUTH_OPEN);
+      saved_profile_attempt_disconnect_revision =
+          wifiEventSnapshot().disconnected_revision;
+      WiFi.begin(reconnect_profile.ssid, reconnect_profile.password);
+      WifiProfileStore::clearCredentials(&reconnect_profile);
+      portENTER_CRITICAL(&wifi_mux_);
+      wifi_catalog_.connected_ssid[0] = '\0';
+      wifi_catalog_.saved_count = wifi_profiles.count();
+      ++wifi_catalog_.revision;
+      portEXIT_CRITICAL(&wifi_mux_);
       bool setup_started_during_begin = false;
       portENTER_CRITICAL(&wifi_mux_);
       setup_started_during_begin =
@@ -1856,16 +2053,48 @@ void NetworkUplink::taskLoop() {
       portEXIT_CRITICAL(&wifi_mux_);
       if (setup_started_during_begin) {
         WiFi.disconnect(false, false);
+        saved_profile_attempt_in_progress = false;
         next_wifi_attempt_ms = now_ms + kWifiScanDisconnectSettleMs;
         Serial.println(
             "[WIFI_SETUP] cancelled saved reconnect that raced with setup");
       } else {
-        next_wifi_attempt_ms = now_ms + nextBackoff(&wifi_retry_index);
+        saved_profile_attempt_in_progress = true;
+        saved_profile_attempt_deadline_ms =
+            now_ms + kWifiSavedProfileAttemptTimeoutMs;
       }
     }
 
     if (connected && !was_connected) {
+      const String connected_ssid = WiFi.SSID();
+      WifiProfileStore reordered_profiles;
+      const bool cloned = wifi_profiles.cloneTo(&reordered_profiles);
+      const WifiProfileMutation reordered =
+          cloned ? reordered_profiles.markSuccessful(connected_ssid.c_str())
+                 : WifiProfileMutation::kInvalidInput;
+      const bool reorder_changed = wifiProfileMutationChanged(reordered);
+      if (cloned && reordered != WifiProfileMutation::kNotFound &&
+          reordered != WifiProfileMutation::kInvalidInput &&
+          (!reorder_changed && !wifi_profiles_need_persist ||
+           saveStoredWifiProfiles(reordered_profiles))) {
+        wifi_profiles.swap(&reordered_profiles);
+        wifi_profiles_need_persist = false;
+      } else if (reorder_changed || wifi_profiles_need_persist) {
+        wifi_profiles_need_persist = true;
+        Serial.println(
+            "[WIFI] WARN recent-profile order could not be persisted");
+      }
+      copyFixedText(active_wifi_ssid, sizeof(active_wifi_ssid),
+                    connected_ssid.c_str());
+      WifiCredentials connected_profile{};
+      if (wifi_profiles.copyForSsid(active_wifi_ssid, &connected_profile)) {
+        copyFixedText(active_wifi_password, sizeof(active_wifi_password),
+                      connected_profile.password);
+      }
+      WifiProfileStore::clearCredentials(&connected_profile);
       wifi_retry_index = 0U;
+      next_wifi_profile_index = 0U;
+      wifi_profiles_attempted_in_cycle = 0U;
+      saved_profile_attempt_in_progress = false;
       next_http_attempt_ms = now_ms;
       next_environment_attempt_ms = now_ms;
       next_simulation_recovery_ms = now_ms;
@@ -1880,8 +2109,12 @@ void NetworkUplink::taskLoop() {
       configTime(0, 0, app_config::kNtpServer1, app_config::kNtpServer2);
       portENTER_CRITICAL(&wifi_mux_);
       if (!wifi_setup_active_) {
+        markSavedWifiOptions(&wifi_catalog_, wifi_profiles);
         copyFixedText(wifi_catalog_.active_ssid,
                       sizeof(wifi_catalog_.active_ssid), active_wifi_ssid);
+        copyFixedText(wifi_catalog_.connected_ssid,
+                      sizeof(wifi_catalog_.connected_ssid),
+                      connected_ssid.c_str());
         wifi_catalog_.state = WifiSetupState::kConnected;
         wifi_catalog_.error = WifiSetupError::kNone;
         ++wifi_catalog_.revision;
@@ -1892,6 +2125,10 @@ void NetworkUplink::taskLoop() {
       environment_reachable = false;
       markEnvironmentStale();
       markRiskStale(RiskAvailability::kUnavailable, 0);
+      portENTER_CRITICAL(&wifi_mux_);
+      wifi_catalog_.connected_ssid[0] = '\0';
+      ++wifi_catalog_.revision;
+      portEXIT_CRITICAL(&wifi_mux_);
       Serial.println("[WIFI] disconnected; local sensing remains active");
     }
     was_connected = connected;

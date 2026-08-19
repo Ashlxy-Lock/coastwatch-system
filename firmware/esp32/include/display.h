@@ -36,9 +36,9 @@ class CoastalDisplay {
   bool showWifiForgetConfirm(const char *ssid, WifiSetupState state,
                              WifiSetupError error);
   bool showWifiPassword(const WifiNetworkOption &network,
-                        const char *password, size_t password_length,
-                        WifiKeyboardMode mode, WifiSetupState state,
-                        WifiSetupError error, const char *key_feedback);
+                        size_t password_length, WifiKeyboardMode mode,
+                        WifiSetupState state, WifiSetupError error,
+                        const char *key_feedback);
   bool updateWifiKeyFeedback(const char *key_feedback);
   bool ready() const { return ready_; }
 

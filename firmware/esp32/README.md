@@ -263,27 +263,39 @@ pio test -e esp32s3-test -f test_model_control --without-uploading --without-tes
 ## On-device Wi-Fi setup
 
 The compiled `WIFI_SSID` and `WIFI_PASSWORD` are first-boot fallback values.
-The normal setup flow is entirely on the 800x480 touch display:
+The ESP32 keeps a bounded, de-duplicated library of up to 16 successful
+networks; literal unlimited storage is impossible on finite flash. The normal
+setup flow is entirely on the 800x480 touch display:
 
 1. Tap the `WIFI` button in the weather header, or tap the Wi-Fi card while
    the network-status page is visible.
 2. Wait for the radio scan, then tap a network.
-3. Enter an 8-63 character password with the masked on-screen keyboard.
-   `UP/LOW` changes case and `SYM/ABC` changes the character page. Open
-   networks skip password entry.
-4. Tap `CONNECT`. Credentials are written to the `coast-net/profile` NVS blob
-   only after the ESP32 receives an IP address. A failed password or timeout
-   does not replace the saved profile; the previous network reconnects after
-   leaving the setup screen.
-5. The picker shows `SAVED: <SSID>`. Tap the red `FORGET` button and confirm to
-   remove that profile. The firmware writes a persistent empty tombstone before
-   disconnecting, so a reboot cannot revive the build-time fallback Wi-Fi. A
-   later successful `CONNECT` replaces the tombstone with the new profile.
+3. A card marked `SAVED` can connect with its internal saved password; leave
+   the field empty and tap `CONNECT`. Typing a new 8-63 character password
+   updates that SSID only after a successful connection. Existing or compiled
+   exact 64-character hexadecimal raw WPA PSKs are also preserved during
+   migration and supported by automatic reconnection. `UP/LOW` changes case
+   and `SYM/ABC` changes the character page. Open networks need no password.
+4. Successful credentials are committed to the checksummed
+   `coast-net/profiles2` NVS blob. The old single `coast-net/profile` record or
+   forget tombstone is migrated automatically. A wrong password, timeout, or
+   NVS write failure leaves the whole previous list unchanged.
+5. Reconnect tries the most recently successful network first, then rotates
+   through all saved profiles instead of getting stuck on one unavailable AP.
+   Saving a seventeenth SSID evicts only the least recently successful entry.
+6. The footer shows `SAVED n/16` and distinguishes the actual `CONNECTED`
+   network from the `PREFERRED` (most recently successful) profile. `FORGET`
+   removes the displayed
+   preferred profile. An empty saved list remains a persistent state, so a
+   reboot cannot resurrect the compiled fallback network.
 
 Holding the board's `BOOT` button for 1.5 seconds while the firmware is running
 also opens the Wi-Fi picker. The scan and connection state machine runs only on
 the network task, so local sensing and deterministic alarm logic keep running.
-The password is never printed and the LCD shows only its length and mask.
+Passwords are never printed or returned to the UI; the LCD receives only the
+typed length and draws a mask. Credentials are integrity-checked in NVS, but
+this firmware does not claim at-rest encryption unless ESP32 flash/NVS
+encryption is separately enabled for the deployed board.
 
 ## On-device global location search
 
