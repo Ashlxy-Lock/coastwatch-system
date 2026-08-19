@@ -406,9 +406,9 @@ def clear_admin_session_cookie(response: Response) -> None:
 
 
 LOGIN_HTML = """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
+<html lang="en-GB"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>海岸预警系统管理员登录</title>
+<title>CoastWatch Administrator Sign In</title>
 <style>
 :root{color-scheme:dark;--bg:#07151d;--panel:#102733;--line:#284958;--text:#eefbff;--muted:#8cabb7;--accent:#4bd6ff;--fault:#ff6b72}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 20% 0,#123747 0,transparent 44%),var(--bg);font-family:Inter,Segoe UI,sans-serif;color:var(--text);padding:20px}
@@ -417,16 +417,16 @@ LOGIN_HTML = """<!doctype html>
 label{display:block;color:var(--muted);font-size:13px;margin:14px 0 6px}input{width:100%;border:1px solid var(--line);border-radius:10px;background:#071820;color:var(--text);font:inherit;padding:12px 13px;outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #4bd6ff22}
 button{width:100%;margin-top:20px;border:0;border-radius:10px;background:var(--accent);color:#06202a;font:inherit;font-weight:800;padding:12px;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.error{min-height:20px;color:var(--fault);font-size:13px;margin-top:12px}
 </style></head><body><main class="card">
-<div class="eyebrow">Protected console</div><h1>海岸预警系统管理员</h1>
-<div class="muted">登录后才能访问数据标注、训练与设备管理后台。ESP32 设备接口使用独立凭据。</div>
-<form id="loginForm"><label for="username">账号</label><input id="username" name="username" autocomplete="username" required maxlength="64" autofocus>
-<label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
-<button id="submitLogin" type="submit">登录管理后台</button><div id="loginError" class="error" role="alert" aria-live="polite"></div></form>
+<div class="eyebrow">Protected console</div><h1>CoastWatch Administrator</h1>
+<div class="muted">Sign in to access annotations, official-model workflows, and device monitoring. ESP32 device endpoints use separate credentials.</div>
+<form id="loginForm"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required maxlength="64" autofocus>
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+<button id="submitLogin" type="submit">Sign in</button><div id="loginError" class="error" role="alert" aria-live="polite"></div></form>
 </main><script>
 const form=document.getElementById('loginForm'),button=document.getElementById('submitLogin'),error=document.getElementById('loginError');
 form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;error.textContent='';
   try{const response=await fetch('/admin/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:form.username.value,password:form.password.value})});
-    if(!response.ok){let detail='登录失败';try{detail=(await response.json()).detail||detail}catch(_ignored){};throw new Error(response.status===429?'尝试次数过多，请稍后再试':detail)}
+    if(!response.ok){let detail='Sign-in failed';try{detail=(await response.json()).detail||detail}catch(_ignored){};throw new Error(response.status===429?'Too many attempts. Please try again later.':detail)}
     window.location.replace('/admin/console');
   }catch(reason){error.textContent=String(reason.message||reason)}finally{button.disabled=false}
 });

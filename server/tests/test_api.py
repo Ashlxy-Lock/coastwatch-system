@@ -130,11 +130,9 @@ def test_health_dashboard_and_demo_environment(client: TestClient):
 
     dashboard = client.get("/")
     assert dashboard.status_code == 200
-    assert "海岸安全预警监控" in dashboard.text
+    assert "CoastWatch Great Yarmouth Monitoring Console" in dashboard.text
 
-    environment = client.get(
-        "/api/v1/environment", params={"device_id": "COAST_01"}
-    )
+    environment = client.get("/api/v1/environment", params={"device_id": "COAST_01"})
     assert environment.status_code == 200
     assert environment.json()["source"] == "demo"
     assert environment.json()["provider"] == "built-in-demo"
@@ -164,18 +162,17 @@ def test_device_location_can_be_selected_and_drives_environment(
     assert saved.status_code == 200
     assert saved.json()["display_location"] == "BRIGHTON ENGLAND GB"
     assert saved.json()["kind"] == "coast"
-    assert client.get(
-        "/api/v1/device-location", params={"device_id": "COAST_01"}
-    ).json() == saved.json()
+    assert (
+        client.get("/api/v1/device-location", params={"device_id": "COAST_01"}).json()
+        == saved.json()
+    )
 
     monkeypatch.setattr(
         environment_service,
         "_request_json",
         lambda _client, url, _params: open_meteo_payload(url),
     )
-    environment = client.get(
-        "/api/v1/environment", params={"device_id": "COAST_01"}
-    )
+    environment = client.get("/api/v1/environment", params={"device_id": "COAST_01"})
     assert environment.status_code == 200
     assert environment.json()["location"] == "Brighton, England, United Kingdom"
     assert environment.json()["display_location"] == "BRIGHTON ENGLAND GB"
@@ -208,9 +205,7 @@ def test_plain_global_place_never_fabricates_marine_conditions(
         return open_meteo_payload(url)
 
     monkeypatch.setattr(environment_service, "_request_json", weather_only)
-    response = client.get(
-        "/api/v1/environment", params={"device_id": "COAST_01"}
-    )
+    response = client.get("/api/v1/environment", params={"device_id": "COAST_01"})
     assert response.status_code == 200
     payload = response.json()
     assert calls == [environment_service.WEATHER_API_URL]
@@ -459,9 +454,7 @@ def test_post_latest_and_history_are_persisted(client: TestClient):
     assert first.json()["device_id"] == "COAST_01"
     assert first.json()["person_detected"] is True
 
-    latest = client.get(
-        "/api/v1/telemetry/latest", params={"device_id": "COAST_01"}
-    )
+    latest = client.get("/api/v1/telemetry/latest", params={"device_id": "COAST_01"})
     assert latest.status_code == 200
     assert latest.json()["seq"] == 43
 
@@ -473,9 +466,7 @@ def test_post_latest_and_history_are_persisted(client: TestClient):
 
 
 def test_latest_returns_404_before_first_telemetry(client: TestClient):
-    response = client.get(
-        "/api/v1/telemetry/latest", params={"device_id": "COAST_01"}
-    )
+    response = client.get("/api/v1/telemetry/latest", params={"device_id": "COAST_01"})
     assert response.status_code == 404
 
 
