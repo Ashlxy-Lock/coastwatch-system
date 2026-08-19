@@ -2160,8 +2160,8 @@ bool CoastalDisplay::showWifiPicker(const WifiCatalog &catalog, size_t page) {
 
     const wifi_setup_ui::Rect bounds = wifi_setup_ui::cardRect(slot);
     const WifiNetworkOption &option = catalog.options[option_index];
-    const bool active = catalog.active_ssid[0] != '\0' &&
-                        std::strcmp(option.ssid, catalog.active_ssid) == 0;
+    const bool active = catalog.connected_ssid[0] != '\0' &&
+                        std::strcmp(option.ssid, catalog.connected_ssid) == 0;
     drawCard(framebuffer_, bounds.x, bounds.y, bounds.width, bounds.height,
              active ? rgb565(15, 75, 82) : kCard);
     if (active) {
@@ -2183,8 +2183,12 @@ bool CoastalDisplay::showWifiPicker(const WifiCatalog &catalog, size_t page) {
     const char *security = !option.supported
                                ? "UNSUPPORTED"
                                : (option.secured ? "LOCK" : "OPEN");
+    const char *profile_state = active ? "  CONNECTED"
+                                : option.saved_usable ? "  SAVED"
+                                : option.saved        ? "  REENTER"
+                                                      : "";
     std::snprintf(details, sizeof(details), "%s  %ld DBM%s", security,
-                  static_cast<long>(option.rssi), active ? "  ACTIVE" : "");
+                  static_cast<long>(option.rssi), profile_state);
     drawText(framebuffer_, bounds.x + 52, bounds.y + 39, details, 1,
              active ? kGreen : kCyan);
   }
@@ -2202,14 +2206,16 @@ bool CoastalDisplay::showWifiPicker(const WifiCatalog &catalog, size_t page) {
              catalog.state == WifiSetupState::kError ? kRed : kMuted);
   }
 
-  const bool has_saved_wifi = catalog.active_ssid[0] != '\0';
+  const bool has_saved_wifi = catalog.saved_count > 0U;
   char saved_ssid[29]{};
   if (has_saved_wifi) {
     makeWifiDisplayText(catalog.active_ssid, saved_ssid, sizeof(saved_ssid),
                         27U);
   }
-  char saved_text[40]{};
-  std::snprintf(saved_text, sizeof(saved_text), "SAVED: %s",
+  char saved_text[52]{};
+  std::snprintf(saved_text, sizeof(saved_text), "SAVED %u/%u  PREFERRED: %s",
+                static_cast<unsigned>(catalog.saved_count),
+                static_cast<unsigned>(kWifiSavedProfileCapacity),
                 has_saved_wifi ? saved_ssid : "NONE");
   drawText(framebuffer_, 28, 385, saved_text, 1,
            has_saved_wifi ? kGreen : kMuted);
@@ -2300,7 +2306,6 @@ bool CoastalDisplay::showWifiForgetConfirm(const char *ssid,
 }
 
 bool CoastalDisplay::showWifiPassword(const WifiNetworkOption &network,
-                                      const char *password,
                                       size_t password_length,
                                       WifiKeyboardMode mode,
                                       WifiSetupState state,
@@ -2312,9 +2317,11 @@ bool CoastalDisplay::showWifiPassword(const WifiNetworkOption &network,
 
   const bool busy = state == WifiSetupState::kConnecting;
   const bool connected = state == WifiSetupState::kConnected;
+  const bool use_saved_password =
+      network.saved_usable && network.secured && password_length == 0U;
   const bool password_valid =
       network.supported &&
-      (!network.secured ||
+      (!network.secured || use_saved_password ||
        (password_length >= 8U && password_length <= 63U));
   const char *state_label = wifiStateLabel(state);
   const uint16_t state_color = wifiStateColor(state);
@@ -2356,20 +2363,16 @@ bool CoastalDisplay::showWifiPassword(const WifiNetworkOption &network,
   fillRect(framebuffer_, 330, 72, 446, 44, kCardAlt);
   drawRect(framebuffer_, 330, 72, 446, 44, 2, kCyan);
   char visible_password[27]{};
-  size_t safe_length = 0U;
-  if (password != nullptr) {
-    while (safe_length < password_length &&
-           safe_length < kWifiPasswordBytes - 1U &&
-           password[safe_length] != '\0') {
-      ++safe_length;
+  const size_t safe_length =
+      std::min(password_length, kWifiPasswordBytes - 1U);
+  if (safe_length > 0U) {
+    const size_t masked_length = std::min<size_t>(safe_length, 23U);
+    std::fill_n(visible_password, masked_length, '*');
+    if (safe_length > masked_length) {
+      visible_password[masked_length] = '.';
+      visible_password[masked_length + 1U] = '.';
+      visible_password[masked_length + 2U] = '.';
     }
-  }
-  if (safe_length <= 26U) {
-    std::copy_n(password == nullptr ? "" : password, safe_length,
-                visible_password);
-  } else {
-    visible_password[0] = '<';
-    std::copy_n(password + safe_length - 25U, 25U, visible_password + 1U);
   }
   const char *password_text = visible_password;
   uint16_t password_color = kWhite;
@@ -2378,6 +2381,9 @@ bool CoastalDisplay::showWifiPassword(const WifiNetworkOption &network,
     password_color = kRed;
   } else if (!network.secured) {
     password_text = "NO PASSWORD REQUIRED";
+    password_color = kGreen;
+  } else if (use_saved_password) {
+    password_text = "SAVED PASSWORD - OR TYPE NEW";
     password_color = kGreen;
   } else if (safe_length == 0U) {
     password_text = "TYPE PASSWORD";
@@ -2438,6 +2444,9 @@ bool CoastalDisplay::showWifiPassword(const WifiNetworkOption &network,
                                 : "SELECT A WPA/WPA2/WPA3 PERSONAL NETWORK";
   } else if (error == WifiSetupError::kNone && !network.secured) {
     message = "NO PASSWORD NEEDED - TAP CONNECT";
+    message_color = kGreen;
+  } else if (error == WifiSetupError::kNone && use_saved_password) {
+    message = "USE SAVED PASSWORD OR TYPE A NEW ONE";
     message_color = kGreen;
   }
   drawText(framebuffer_, 28, 360, message, 2, message_color);

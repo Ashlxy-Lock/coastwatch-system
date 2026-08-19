@@ -1,0 +1,4 @@
+[submodule "website"]
+	path = website
+	url = https://github.com/Ashlxy-Lock/coastwatch-website.git
+	branch = main

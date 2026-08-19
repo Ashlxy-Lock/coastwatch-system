@@ -3,6 +3,7 @@
 /*
 !/.gitignore
 !/.gitattributes
+!/.gitmodules
 !/README.md
 !/README_Coastal_Warning_System.md
 !/CoastWatch_项目最新总览_2026-08-14.md
@@ -13,6 +14,7 @@
 !/server/
 !/tests/
 !/tools/
+!/website
 
 # Project documentation only.
 /docs/*
@@ -22,7 +24,6 @@
 /firmware/*
 !/firmware/esp32/
 !/firmware/openmv/
-!/firmware/stm32/
 /firmware/esp32/*
 !/firmware/esp32/.gitignore
 !/firmware/esp32/platformio.ini
@@ -33,15 +34,6 @@
 /firmware/openmv/*
 !/firmware/openmv/*.py
 !/firmware/openmv/README.md
-/firmware/stm32/*
-!/firmware/stm32/.gitignore
-!/firmware/stm32/platformio.ini
-!/firmware/stm32/README.md
-!/firmware/stm32/CLOCK_AUDIT.md
-!/firmware/stm32/host_test.ps1
-!/firmware/stm32/include/
-!/firmware/stm32/src/
-!/firmware/stm32/test/
 
 # ML source/config/tests only; datasets, reports, runs and artifacts stay local.
 /ml/*

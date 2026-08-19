@@ -148,7 +148,10 @@ class OpenMVVisionLogicTests(unittest.TestCase):
         frame = object()
 
         for _ in range(config.TARGET_ENTER_FRAMES - 1):
-            self.assertEqual(detector.detect(frame), (0, 0, 0, 0, 0, None))
+            result = detector.detect(frame)
+            self.assertEqual(result[0], 0)
+            self.assertGreater(result[1], 0)
+            self.assertEqual(result[2:], (0, 0, 0, None))
 
         confirmed = detector.detect(frame)
         self.assertEqual(confirmed, (1, 90, 0, 0, 1, None))
@@ -162,7 +165,60 @@ class OpenMVVisionLogicTests(unittest.TestCase):
 
         for _ in range(config.TARGET_EXIT_FRAMES - 1):
             self.assertEqual(detector.detect(frame)[0], 1)
-        self.assertEqual(detector.detect(frame), (0, 0, 0, 0, 0, None))
+        cleared = detector.detect(frame)
+        self.assertEqual(cleared[0], 0)
+        self.assertEqual(cleared[1], 20)
+
+    def test_alert_led_person_vote_tolerates_one_borderline_frame(self):
+        detector = vision_detector.PersonClassifierDetector(
+            FakePersonModel([0.56, 0.52, 0.58])
+        )
+        frame = object()
+
+        first = detector.detect(frame, alert_mode=True)
+        first_alert = detector.alert_person_present()
+        second = detector.detect(frame, alert_mode=True)
+        second_alert = detector.alert_person_present()
+        third = detector.detect(frame, alert_mode=True)
+        third_alert = detector.alert_person_present()
+
+        # The conservative VIS path remains clear because no sample reaches
+        # its 0.65 threshold, while the alert-only 2-of-3 vote sees a person.
+        self.assertEqual((first[0], second[0], third[0]), (0, 0, 0))
+        self.assertFalse(first_alert)
+        self.assertFalse(second_alert)
+        self.assertTrue(third_alert)
+
+    def test_alert_led_person_vote_resets_outside_alert_mode(self):
+        detector = vision_detector.PersonClassifierDetector(
+            FakePersonModel([0.56, 0.57, 0.58, 0.60])
+        )
+        frame = object()
+
+        detector.detect(frame, alert_mode=True)
+        detector.detect(frame, alert_mode=True)
+        detector.detect(frame, alert_mode=True)
+        self.assertTrue(detector.alert_person_present())
+
+        detector.detect(frame, alert_mode=False)
+        self.assertFalse(detector.alert_person_present())
+
+    def test_alert_led_person_requires_five_low_scores_to_exit(self):
+        scores = [0.56, 0.57, 0.58] + [0.49] * config.ALERT_PERSON_EXIT_FRAMES
+        detector = vision_detector.PersonClassifierDetector(
+            FakePersonModel(scores)
+        )
+        frame = object()
+
+        for _ in range(3):
+            detector.detect(frame, alert_mode=True)
+        self.assertTrue(detector.alert_person_present())
+
+        for _ in range(config.ALERT_PERSON_EXIT_FRAMES - 1):
+            detector.detect(frame, alert_mode=True)
+            self.assertTrue(detector.alert_person_present())
+        detector.detect(frame, alert_mode=True)
+        self.assertFalse(detector.alert_person_present())
 
 
 if __name__ == "__main__":

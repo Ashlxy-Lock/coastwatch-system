@@ -53,7 +53,7 @@ class NetworkUplink {
   void copyWifiCatalog(WifiCatalog *catalog) const;
   void requestWifiScan();
   bool requestWifiConnect(const char *ssid, const char *password);
-  bool requestWifiForget();
+  bool requestWifiForget(const char *ssid);
   void dismissWifiForgetError();
   void endWifiSetup();
 
@@ -140,6 +140,8 @@ class NetworkUplink {
   bool wifi_forget_requested_{false};
   char pending_wifi_ssid_[kWifiSsidBytes]{};
   char pending_wifi_password_[kWifiPasswordBytes]{};
+  char pending_wifi_forget_ssid_[kWifiSsidBytes]{};
   uint8_t pending_wifi_auth_mode_{0U};
   bool pending_wifi_secured_{true};
+  bool pending_wifi_use_saved_{false};
 };

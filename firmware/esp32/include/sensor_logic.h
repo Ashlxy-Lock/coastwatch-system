@@ -91,7 +91,7 @@ void accept_network(SensorState *state, uint32_t now_ms,
                     bool wifi_connected, bool server_reachable);
 void tick(SensorState *state, uint32_t now_ms);
 
-// now_ms is also the device uptime carried by the legacy TEL contract. The
+// now_ms is also the device uptime carried by the telemetry contract. The
 // caller owns sequence allocation so a future sensor task remains the only
 // writer of the counter.
 TelemetryFrame snapshot(const SensorState &state, uint32_t now_ms,

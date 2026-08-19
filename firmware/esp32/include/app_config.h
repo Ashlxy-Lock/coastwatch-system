@@ -97,7 +97,6 @@ constexpr const char *kLocationPresetsPath = "/api/v1/locations/presets";
 constexpr const char *kLocationSearchPath = "/api/v1/locations/search";
 constexpr const char *kDeviceLocationPath = "/api/v1/device-location";
 
-constexpr uint32_t kNetFrameIntervalMs = 1000;
 constexpr uint32_t kTelemetryUploadIntervalMs = 2000;
 // Simulation collection is deliberately faster, but still uploads only the
 // freshest complete local sensor frame. Sensing never waits for this cadence.
@@ -131,9 +130,9 @@ constexpr size_t kRetryBackoffCount =
     sizeof(kRetryBackoffMs) / sizeof(kRetryBackoffMs[0]);
 
 constexpr uint8_t kTelemetryQueueDepth = 8;
-// HTTPS plus the fixed-size location catalogue briefly coexist on this task's
-// stack while the picker is loading. Keep comfortable headroom for mbedTLS.
-constexpr uint32_t kNetworkTaskStackBytes = 16384;
+// HTTPS plus the fixed-size location catalogue and transactional Wi-Fi profile
+// clone briefly coexist on this task. Keep comfortable headroom for mbedTLS.
+constexpr uint32_t kNetworkTaskStackBytes = 24576;
 constexpr uint8_t kNetworkTaskPriority = 1;
 constexpr int kNetworkTaskCore = 0;
 

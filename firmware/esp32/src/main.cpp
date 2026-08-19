@@ -259,6 +259,8 @@ void setWifiKeyFeedback(const char *label) {
 bool wifiPasswordReady() {
   return wifi_selected_network.supported &&
          (!wifi_selected_network.secured ||
+          (wifi_selected_network.saved_usable &&
+           wifi_password_length == 0U) ||
           (wifi_password_length >= 8U && wifi_password_length <= 63U));
 }
 
@@ -271,19 +273,19 @@ void invalidateWifiRendering() {
   wifi_rendered_error = static_cast<WifiSetupError>(UINT8_MAX);
 }
 
-void logInvalidVisionFrame(TelParseResult result) {
+void logInvalidVisionFrame(FrameParseResult result) {
   ++invalid_vision_frames;
   if (invalid_vision_frames <= 5U || invalid_vision_frames % 25U == 0U) {
     Serial.printf("[OPENMV] dropped VIS frame reason=%s invalid_total=%lu\n",
-                  telParseResultName(result),
+                  frameParseResultName(result),
                   static_cast<unsigned long>(invalid_vision_frames));
   }
 }
 
 void processVisionLine(const char *line) {
   VisionFrame vision{};
-  const TelParseResult result = parseVisionFrame(line, &vision);
-  if (result != TelParseResult::kOk) {
+  const FrameParseResult result = parseVisionFrame(line, &vision);
+  if (result != FrameParseResult::kOk) {
     logInvalidVisionFrame(result);
     return;
   }
@@ -453,7 +455,7 @@ void publishLocalTelemetryIfDue(uint32_t now_ms) {
   have_latest_telemetry = true;
 
   Serial.printf(
-      "[LOCAL] TEL seq=%lu distance=%lu rise=%ld rate=%ld person=%u "
+      "[LOCAL] TELEMETRY seq=%lu distance=%lu rise=%ld rate=%ld person=%u "
       "alarm=%u health=0x%lX\n",
       static_cast<unsigned long>(telemetry.seq),
       static_cast<unsigned long>(telemetry.distance_mm),
@@ -581,7 +583,8 @@ void refreshDisplayIfNeeded() {
     WifiSetupError visible_error = wifi_catalog_snapshot.error;
     const bool forget_succeeded =
         wifi_forget_submitted && visible_state == WifiSetupState::kReady &&
-        wifi_catalog_snapshot.active_ssid[0] == '\0';
+        wifi_forget_ssid[0] != '\0' &&
+        std::strcmp(wifi_catalog_snapshot.active_ssid, wifi_forget_ssid) != 0;
     if (forget_succeeded) {
       wifi_forget_submitted = false;
       wifi_forget_ssid[0] = '\0';
@@ -646,9 +649,8 @@ void refreshDisplayIfNeeded() {
         visible_state != wifi_rendered_state ||
         visible_error != wifi_rendered_error) {
       if (coastal_display.showWifiPassword(
-              wifi_selected_network, wifi_password, wifi_password_length,
-              wifi_keyboard_mode, visible_state, visible_error,
-              wifi_key_feedback)) {
+              wifi_selected_network, wifi_password_length, wifi_keyboard_mode,
+              visible_state, visible_error, wifi_key_feedback)) {
         wifi_rendered_revision = wifi_catalog_snapshot.revision;
         wifi_rendered_password_length = wifi_password_length;
         wifi_rendered_keyboard_mode = wifi_keyboard_mode;
@@ -1304,7 +1306,7 @@ void handleWifiForgetConfirmPress(const TouchEvent &event) {
     return;
   }
   if (!busy && wifi_setup_ui::kForgetConfirmButton.contains(x, y)) {
-    if (network_uplink.requestWifiForget()) {
+    if (network_uplink.requestWifiForget(wifi_forget_ssid)) {
       wifi_forget_submitted = true;
       invalidateWifiRendering();
       Serial.printf("[UI] wifi forget submitted ssid='%s'\n",
@@ -1408,8 +1410,7 @@ void handleWifiPasswordPress(const TouchEvent &event) {
         const char character = wifi_keyboard_ui::keyCharacter(
             wifi_keyboard_mode, row, column);
         if (character != '\0') {
-          char label[2]{character, '\0'};
-          setWifiKeyFeedback(appendWifiPasswordCharacter(character) ? label
+          setWifiKeyFeedback(appendWifiPasswordCharacter(character) ? "KEY"
                                                                     : "FULL");
         }
       }

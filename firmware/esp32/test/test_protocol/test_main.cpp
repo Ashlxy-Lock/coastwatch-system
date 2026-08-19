@@ -5,60 +5,10 @@
 
 #include "protocol.h"
 #include "ring_buffer.h"
+#include "telemetry.h"
 
 void setUp() {}
 void tearDown() {}
-
-void test_valid_tel_vector() {
-  TelemetryFrame telemetry{};
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(TelParseResult::kOk),
-      static_cast<int>(parseTelFrame(
-          "$TEL,42,123456,815,126,21,1,3,7*63", &telemetry)));
-  TEST_ASSERT_EQUAL_UINT32(42U, telemetry.seq);
-  TEST_ASSERT_EQUAL_UINT32(123456U, telemetry.uptime_ms);
-  TEST_ASSERT_EQUAL_UINT32(815U, telemetry.distance_mm);
-  TEST_ASSERT_EQUAL_INT32(126, telemetry.water_rise_mm);
-  TEST_ASSERT_EQUAL_INT32(21, telemetry.rise_rate_mm_s);
-  TEST_ASSERT_TRUE(telemetry.person_detected);
-  TEST_ASSERT_EQUAL_UINT8(3U, telemetry.alarm_level);
-  TEST_ASSERT_EQUAL_UINT32(7U, telemetry.health_flags);
-}
-
-void test_signed_water_values() {
-  const char *payload = "TEL,8,900,0,-12,-5,0,0,0";
-  char frame[96]{};
-  snprintf(frame, sizeof(frame), "$%s*%02X", payload,
-           static_cast<unsigned int>(protocolXor(payload, strlen(payload))));
-
-  TelemetryFrame telemetry{};
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(TelParseResult::kOk),
-      static_cast<int>(parseTelFrame(frame, &telemetry)));
-  TEST_ASSERT_EQUAL_INT32(-12, telemetry.water_rise_mm);
-  TEST_ASSERT_EQUAL_INT32(-5, telemetry.rise_rate_mm_s);
-}
-
-void test_bad_checksum_is_rejected_without_overwrite() {
-  TelemetryFrame telemetry{99U, 88U, 77U, 66, 55, true, 4U, 44U};
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(TelParseResult::kBadChecksum),
-      static_cast<int>(parseTelFrame(
-          "$TEL,42,123456,815,126,21,1,3,7*00", &telemetry)));
-  TEST_ASSERT_EQUAL_UINT32(99U, telemetry.seq);
-  TEST_ASSERT_EQUAL_UINT8(4U, telemetry.alarm_level);
-}
-
-void test_invalid_person_and_alarm_are_rejected() {
-  const char *payload = "TEL,1,2,3,4,5,2,9,7";
-  char frame[96]{};
-  snprintf(frame, sizeof(frame), "$%s*%02X", payload,
-           static_cast<unsigned int>(protocolXor(payload, strlen(payload))));
-  TelemetryFrame telemetry{};
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(TelParseResult::kInvalidNumber),
-      static_cast<int>(parseTelFrame(frame, &telemetry)));
-}
 
 void test_openmv_vis_frame_is_strictly_parsed() {
   const char *payload = "VIS,17,1,90,123,77,1";
@@ -66,7 +16,7 @@ void test_openmv_vis_frame_is_strictly_parsed() {
   snprintf(frame, sizeof(frame), "$%s*%02X", payload,
            static_cast<unsigned int>(protocolXor(payload, strlen(payload))));
   VisionFrame vision{};
-  TEST_ASSERT_EQUAL_INT(static_cast<int>(TelParseResult::kOk),
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(FrameParseResult::kOk),
                         static_cast<int>(parseVisionFrame(frame, &vision)));
   TEST_ASSERT_EQUAL_UINT32(17U, vision.seq);
   TEST_ASSERT_TRUE(vision.person_detected);
@@ -80,15 +30,19 @@ void test_openmv_vis_frame_is_strictly_parsed() {
            static_cast<unsigned int>(
                protocolXor(invalid_payload, strlen(invalid_payload))));
   TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(TelParseResult::kOutOfRange),
+      static_cast<int>(FrameParseResult::kOutOfRange),
       static_cast<int>(parseVisionFrame(frame, &vision)));
 }
 
-void test_net_vector() {
-  char frame[96]{};
-  TEST_ASSERT_TRUE(buildNetFrame(frame, sizeof(frame), true, true, -55,
-                                1785398400U));
-  TEST_ASSERT_EQUAL_STRING("$NET,1,1,-55,1785398400*7F\n", frame);
+void test_openmv_vis_rejects_bad_checksum_without_overwrite() {
+  VisionFrame vision{99U, true, 88U, 77U, 66U, true};
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(FrameParseResult::kBadChecksum),
+      static_cast<int>(
+          parseVisionFrame("$VIS,17,1,90,123,77,1*00", &vision)));
+  TEST_ASSERT_EQUAL_UINT32(99U, vision.seq);
+  TEST_ASSERT_TRUE(vision.person_detected);
+  TEST_ASSERT_EQUAL_UINT8(88U, vision.score);
 }
 
 void test_openmv_control_vector_and_safety_relationships() {
@@ -160,7 +114,7 @@ void test_line_reader_drops_oversize_line() {
   TEST_ASSERT_EQUAL_STRING("OK", line);
 }
 
-void test_ultrasonic_snapshot_requires_fresh_healthy_tel() {
+void test_ultrasonic_snapshot_requires_fresh_healthy_telemetry() {
   TelemetryFrame telemetry{};
   telemetry.distance_mm = 1995U;
   telemetry.water_rise_mm = -12;
@@ -213,16 +167,12 @@ void test_ultrasonic_snapshot_age_handles_millis_wraparound() {
 
 int runProtocolTests() {
   UNITY_BEGIN();
-  RUN_TEST(test_valid_tel_vector);
-  RUN_TEST(test_signed_water_values);
-  RUN_TEST(test_bad_checksum_is_rejected_without_overwrite);
-  RUN_TEST(test_invalid_person_and_alarm_are_rejected);
   RUN_TEST(test_openmv_vis_frame_is_strictly_parsed);
-  RUN_TEST(test_net_vector);
+  RUN_TEST(test_openmv_vis_rejects_bad_checksum_without_overwrite);
   RUN_TEST(test_openmv_control_vector_and_safety_relationships);
   RUN_TEST(test_ring_buffer_preserves_order_and_reports_full);
   RUN_TEST(test_line_reader_drops_oversize_line);
-  RUN_TEST(test_ultrasonic_snapshot_requires_fresh_healthy_tel);
+  RUN_TEST(test_ultrasonic_snapshot_requires_fresh_healthy_telemetry);
   RUN_TEST(test_ultrasonic_snapshot_age_handles_millis_wraparound);
   return UNITY_END();
 }

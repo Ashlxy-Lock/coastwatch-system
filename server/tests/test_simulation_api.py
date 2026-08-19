@@ -876,7 +876,7 @@ def test_internal_simulation_lifecycle_training_catalog_and_selection(
     )
     assert reselected_custom.status_code == 200
 
-    # A missing OpenMV makes the STM32 report FAULT while its ultrasonic bit and
+    # A missing OpenMV makes the ESP32 report FAULT while its ultrasonic bit and
     # water measurements remain valid. Training and this custom water model
     # must use the ultrasonic-specific health signal without weakening the
     # independent local-alarm fault state.
