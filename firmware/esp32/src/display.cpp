@@ -1262,9 +1262,9 @@ bool CoastalDisplay::showRiskOverview(const RiskSnapshot &risk,
     return false;
   }
 
-  // This page is informational only. The STM32 remains the sole owner of the
-  // local alarm path; the percentage below is model class confidence, never a
-  // disaster occurrence probability.
+  // The ESP32 owns the deterministic local sensor state. The remote model is
+  // informational only; its percentage is class confidence, never a disaster
+  // occurrence probability and never an actuator command.
   constexpr uint8_t kRiskReady = 1U;
   constexpr uint8_t kRiskNoTelemetry = 2U;
   const bool ready = availability == kRiskReady && risk.fetched_at_ms != 0U;
@@ -1283,7 +1283,7 @@ bool CoastalDisplay::showRiskOverview(const RiskSnapshot &risk,
   uint16_t risk_color = kYellow;
   if (no_telemetry) {
     risk_name = "NO SENSOR DATA";
-    headline = "WAITING FOR STM32";
+    headline = "WAITING FOR SENSOR";
   } else if (!ready) {
     risk_name = http_status > 0 ? "MODEL UNAVAILABLE" : "CONNECTING";
     headline = "RESEARCH CHANNEL OFFLINE";
@@ -1323,11 +1323,19 @@ bool CoastalDisplay::showRiskOverview(const RiskSnapshot &risk,
     std::snprintf(confidence, sizeof(confidence), "%d%%", percent);
     std::snprintf(horizon, sizeof(horizon), "%u HOURS",
                   static_cast<unsigned>(risk.forecast_horizon_hours));
-    if (risk.local_alarm_level == 4U) {
+  }
+  // Use the locally generated frame for the local alarm card even when the
+  // research API is offline. A server response must never replace or gate the
+  // device-local safety result.
+  const bool local_alarm_available = telemetry.telemetry_fresh;
+  const uint8_t local_alarm_level =
+      local_alarm_available ? telemetry.latest.alarm_level : 4U;
+  if (local_alarm_available) {
+    if (local_alarm_level == 4U) {
       std::snprintf(local_alarm, sizeof(local_alarm), "FAULT");
     } else {
       std::snprintf(local_alarm, sizeof(local_alarm), "LEVEL %u",
-                    static_cast<unsigned>(risk.local_alarm_level));
+                    static_cast<unsigned>(local_alarm_level));
     }
   }
   formatMetric(wave, sizeof(wave),
@@ -1344,7 +1352,7 @@ bool CoastalDisplay::showRiskOverview(const RiskSnapshot &risk,
                   "NO SENSOR DATA");
   } else if (!telemetry.telemetry_fresh) {
     std::snprintf(ultrasonic_detail, sizeof(ultrasonic_detail),
-                  "STM32 LINK OFFLINE");
+                  "SENSOR RUNTIME OFFLINE");
   } else if (!telemetry.ultrasonic_available) {
     std::snprintf(ultrasonic_detail, sizeof(ultrasonic_detail),
                   "SEARCHING ECHO");
@@ -1443,7 +1451,7 @@ bool CoastalDisplay::showRiskOverview(const RiskSnapshot &risk,
   drawCard(framebuffer_, 590, 252, 182, 166, kCardAlt);
   drawText(framebuffer_, 608, 271, "LOCAL SENSOR", 2, kMuted);
   drawText(framebuffer_, 608, 306, local_alarm, 3,
-           ready && risk.local_alarm_level > 1U ? kRed : kWhite);
+           local_alarm_available && local_alarm_level > 1U ? kRed : kWhite);
   drawText(framebuffer_, 608, 352, "QUALITY", 2, kMuted);
   drawText(framebuffer_, 608, 382, quality, 2,
            degraded ? kYellow : (ready ? kGreen : kMuted));
@@ -1676,7 +1684,7 @@ bool CoastalDisplay::showSimulationCollection(
   const int card_x[] = {28, 220, 412, 604};
   const char *labels[] = {ultrasonic_ui::kLevelChangeLabel,
                           ultrasonic_ui::kSensorGapLabel, "ULTRASONIC",
-                          "LOCAL VALID/TEL"};
+                          "LOCAL VALID/FRAMES"};
   const char *values[] = {
       level_change, sensor_gap,
       simulationUltrasonicQualityName(ultrasonic_quality),
@@ -1712,7 +1720,7 @@ bool CoastalDisplay::showSimulationCollection(
   drawCard(framebuffer_, 28, 244, 744, 166, kCard);
   const char *headline =
       simulation.has_telemetry ? simulationStateName(simulation.state)
-                               : (open ? "WAITING STM32"
+                               : (open ? "WAITING SENSOR"
                                        : simulationStateName(simulation.state));
   const uint16_t state_color =
       simulation.state == SimulationState::kActive

@@ -367,7 +367,7 @@ def build_risk_result_from_prediction(
     extra_degraded: bool = False,
     data_quality_override: str | None = None,
 ) -> dict[str, Any]:
-    """Merge one research-model result with the independent STM32 alarm floor."""
+    """Merge one research-model result with the independent device alarm floor."""
 
     local_alarm_level = int(telemetry["alarm_level"])
     sensor_fault = local_alarm_level == 4

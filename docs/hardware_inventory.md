@@ -1,21 +1,25 @@
 # 硬件清单
 
-更新时间：2026-08-14
+更新时间：2026-08-18
 
 | 模块 | 当前信息 | 状态 |
 |---|---|---|
 | OpenMV | MV4 H7 Plus | 用户已确认板型名称 |
 | OpenMV 固件 | OpenMV v4.8.1 / MicroPython v1.26.0-77 | 已确认，不升级 |
 | 摄像头实时画面 | QVGA，可正常识别画面内人员 | 已验证 |
-| OpenMV UART | OpenMV UART3 P4/P5 ↔ STM32 USART3 PB11/PB10，115200 8N1 | 实物联调已通过 |
+| OpenMV UART | OpenMV UART3 P4/TX → ESP32 GPIO8/RX，115200 8N1；P5 暂不接 | 单板实物联调通过，视觉健康 bit1=1 |
 | ESP32 | ESP32-S3-WROOM-1-N16R8（16 MB Flash / 8 MB PSRAM），COM8 / CH343 | 芯片、Flash、PSRAM、烧录均已实测 |
 | ESP32 板载 RGB LED | WS2812B，GPIO38 | 资料已确认，尚未实测 |
-| ESP32 UART | ESP32 GPIO8/RX、GPIO14/TX ↔ STM32 USART2 PA2/TX、PA3/RX，115200 8N1；GPIO12 为触摸 INT | 实物已通过；ESP32 持续收到每 500 ms 的 STM32 TEL |
+| ESP32 UART | GPIO8/RX 直接接 OpenMV P4/TX；GPIO14/TX 暂不接；GPIO12 为触摸 INT | 单板路径已启用，不再接收 STM32 TEL |
 | STM32 | STM32F103ZET6；`firmware/stm32` STM32Cube/HAL 桥接工程 | 旧 Flash/option bytes 已双份备份并哈希一致；两阶段启动版固件已烧录并 verify OK |
-| 超声波 | HC-SR04 风格 TRIG/ECHO 模块：TRIG=PC10、ECHO=PC11、5V/GND 共地 | 实物已通过；约 1995 mm 稳定距离、health bit0=1，ESP32 与服务器均收到 |
+| 超声波 | HC-SR04：TRIG=ESP32 GPIO10、2×220Ω/3×220Ω 分压后 ECHO=GPIO40、5V/GND 共地 | 单板实物已通过；约 2002 mm、health bit0=1，服务器 POST=201 |
 | 灯带与报警器 | 暂无 | 未采购/未确认 |
+| ESP32 单主控迁移 | OpenMV→GPIO8、TRIG→GPIO10、220Ω 电阻分压后 ECHO→GPIO40 | 已烧录并端到端验证；综合 health=0xB、alarm=0 |
 
 ## 当前工作边界
+
+2026-08-18 已将 STM32 职责迁移到 ESP32。HC-SR04 ECHO 的 220Ω 电阻分压是
+当前安全边界；不得为了简化接线而直连 ECHO。下面三板内容仅作为回滚记录。
 
 OpenMV 到 STM32F103ZET6 的单向通信已验证。当前阶段增加 ESP32 联网网关：
 

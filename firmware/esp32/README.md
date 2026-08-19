@@ -1,30 +1,35 @@
-# ESP32-S3 联网网关
+# ESP32-S3 单板海岸控制器
 
-本工程是海岸预警系统的联网侧固件。ESP32-S3 只负责接收 STM32 遥测、
-连接 Wi-Fi、上传服务器并返回网络状态；它不判断危险等级，也不控制本地
-声光报警。断网、服务器离线或 ESP32 重启时，STM32 的本地报警必须继续工作。
+本工程将传感器、本地规则、LCD/触摸和联网集中到 ESP32-S3。ESP32 直接接收
+OpenMV VIS、驱动超声波、建立稳定基准、计算水位变化/变化率和本地报警等级，
+再把同一份 `TelemetryFrame` 同时交给 LCD 与服务器。服务器模型可以切换
+OpenMV 的人体检测采样模式，但不能降低、覆盖或控制设备本地报警规则。
+
+`firmware/stm32` 保留为已验证的回滚版本，但正常单板路径不再通过 STM32
+`TEL/NET` 串口。2026-08-18 已完成 ECHO 分压、单板烧录和端到端实机验证。
 
 ## 硬件目标
 
 - 模组：ESP32-S3-WROOM-1-N16R8（16 MB Flash、8 MB PSRAM）
 - 开发板：ESP32-S3-DevKitC-1 类
 - 框架：PlatformIO + Arduino
-- STM32 链路：115200、8N1、换行结尾、3.3 V TTL
+- OpenMV 链路：115200、8N1、全双工校验帧（VIS 上行、CTL 下行）
 
 接线：
 
-| STM32 专用 ESP32 串口 | ESP32-S3 |
+| 信号 | ESP32-S3 |
 |---|---|
-| TX | GPIO8（RX） |
-| RX | GPIO14（TX） |
-| GND | GND |
+| OpenMV P4 / TX | GPIO8（UART1 RX） |
+| OpenMV P5 / RX | GPIO14（UART1 TX） |
+| 超声 TRIG | GPIO10 |
+| 超声 ECHO | **经 5V→3.3V 分压后**接 GPIO40（GPIO42 已由 LCD D/C 占用） |
+| 公共地 | GND |
 
-必须交叉 TX/RX 并共地，不得向 ESP32 GPIO 输入 5 V。STM32 端应使用为 ESP32
-单独分配的 UART；不要让 ESP32 与 OpenMV 同时并接在一组 UART 信号线上。
-ESP32 请从稳定的 5 V/VIN 或 USB 供电，不要从 STM32 的 3.3 V 引脚取电。
-GPIO8/14 不与当前 8 位并口屏和 I2C 触摸冲突。GPIO12 已由屏幕转接板硬接为
-TOUCH_INT，禁止再接 STM32 TX；GPIO17/18 也已被并口屏幕占用。若实际硬件不同，
-只改 `include/app_config.h` 中的两个引脚常量。
+ESP32-S3 没有任何 5 V-tolerant GPIO。HC-SR04 ECHO 必须经过核验的分压或
+经过核验的电平转换器；改接其他 GPIO、ADC 或下载串口都不能绕过这一限制。
+没有转换器时不得接 ECHO、不得启用单板超声。GPIO12 已由触摸 INT 占用，
+GPIO35/36/37 被 N16R8 Octal PSRAM 使用，也不得复用。完整接线和迁移顺序见
+`docs/ESP32_SINGLE_BOARD_MIGRATION.md`。
 
 ## 配置
 
@@ -42,18 +47,23 @@ Copy-Item include/secrets.example.h include/secrets.h
 #define SERVER_BASE_URL "http://电脑局域网IP:8000"
 ```
 
-`include/secrets.h` 已加入 `.gitignore`。不创建该文件也能编译和运行，设备会进入
-UART-only 模式：照常接收/校验 `$TEL`，每秒返回离线 `$NET`，但不会连接网络。
+`include/secrets.h` 已加入 `.gitignore`。默认环境保持超声引脚未认领；只有完成
+ECHO 降压的实物才使用下方显式单板环境。
 
 ## 编译与烧录
 
 在本目录运行：
 
 ```powershell
-pio run -e esp32s3-n16r8
-pio run -e esp32s3-n16r8 -t upload
+pio run -e esp32s3-n16r8-singleboard
+pio run -e esp32s3-n16r8-singleboard -t upload --upload-port COM8
 pio device monitor -b 115200
 ```
+
+`esp32s3-n16r8-singleboard` 会显式定义
+`ULTRASONIC_ECHO_LEVEL_SHIFT_VERIFIED=1`；普通 `esp32s3-n16r8` 环境继续保持
+fail-closed。中文工程路径下旧链接器无法生成 map 时，可把
+`PLATFORMIO_BUILD_DIR` 指向纯英文临时目录。
 
 首轮请把电脑接到开发板标注 **UART** 或 **USB-to-UART** 的 Type-C 口，调试日志
 固定走 UART0/板载 USB 转串口；不要接仅用于原生 USB 的 Type-C 口来找 `Serial`
@@ -63,36 +73,63 @@ pio device monitor -b 115200
 115200。首次烧录若不能自动进入下载模式，按住 BOOT、点一下 RESET，再松开
 BOOT。
 
-## 串口独立联调
+## OpenMV 串口独立联调
 
-没有 Wi-Fi、服务器或 STM32 时，可用 3.3 V USB-TTL 测试：
+没有 OpenMV 时，可用 3.3 V USB-TTL 测试：
 
-1. TTL TX 接 GPIO8，TTL RX 接 GPIO14，GND 共地；
+1. TTL TX 接 GPIO8、TTL RX 接 GPIO14、GND 共地；
 2. 串口设置 115200、8N1；
 3. 发送下面一整行，末尾必须带 `\n`：
 
 ```text
-$TEL,42,123456,815,126,21,1,3,7*63
+$VIS,17,1,90,123,77,1*73
 ```
 
-USB 调试口应打印 `[UART] TEL seq=42 ...`。GPIO14 每秒返回类似：
+校验正确时 ESP32 更新人员状态；错误、超长或伪造的 VIS 会被丢弃。没有新的
+合法 VIS 超过一秒，本地报警进入 `FAULT`，不会静默假设无人。
+
+ESP32 每 500 ms 向 GPIO14 发送严格控制心跳：
 
 ```text
-$NET,0,0,-127,0*76
+$CTL,<seq>,<danger>,<person_enable>,<environmental_level>*<XOR>\r\n
 ```
 
-网络字段变化时校验也会动态变化。协议限制每帧最多 160 字节；超长帧、字段
-错误和校验错误会丢弃，不会覆盖上一条有效数据。
+- `/risk` 为 `Ready`、`stale=false`、`model_source=model`、结果年龄不超过
+  25 秒，且 `environmental_level` 为 warning/critical（2/3）时，发送
+  `danger=1,person_enable=1`；ESP32 实时超声健康，且相对水位增量达到 100 mm
+  或上升速率达到 25 mm/s 时，也发送同样的 danger，即使模型诊断仍为 0/1；
+- 本地 danger 不使用综合 `alarm_level=2/3` 判定，因为 `person_in_zone` 本身就会
+  把综合报警提高到 2，直接复用会形成“检测到人→制造危险→继续检测人”的反馈环；
+  water rise 50 mm advisory、person-only、`alarm_level=4` 故障和超声异常均不置
+  danger；
+- 只有可信 `environmental_level=0`、`data_quality=ok`、`degraded=false`，且
+  ESP32 刚生成的本地帧 `alarm_level=0`、超声/OpenMV 健康时，才发送
+  `danger=0,person_enable=0,level=0`，OpenMV
+  进入 baseline 低频检测并允许显示绿灯；
+- level 0 但存在本地 advisory、质量异常或 degraded，以及 level 1 advisory，
+  均发送 `danger=0,person_enable=1`，保持全速检测且禁止绿灯；只有上条独立的
+  水位/速率阈值可以产生本地 danger；
+- waiting、unavailable、stale、rule-fallback、超过 25 秒或非法等级在没有健康
+  本地水位/速率危险时发送 `danger=0,person_enable=1`，要求全速 fail-safe 检测；
+- `risk_level` 是组合展示值，RiskSnapshot 的 `local_alarm_level` 是服务器延迟
+  回显，两者都不能伪装成“模型危险”或授权绿灯。CTL 只切换相机采样模式，
+  ESP32 本地报警链路继续独立运行；
+- `environmental_level` 仅供模型诊断，不能单独控制 LED；OpenMV 收到新鲜 danger
+  先黄闪并全速检测，稳定检测到人后才转红。绿灯只能由严格的新鲜 `0,0,0`
+  控制帧授权。
 
 ## 运行机制
 
-- 主 Arduino 循环只轮询 UART 环形缓冲、按换行拆帧、校验 `$TEL` 并发送 `$NET`；
+- 主循环轮询 OpenMV UART 和超声状态机，回波边沿由短 ISR 捕获；
+- 每 500 ms 发送一次 CTL 心跳；风险结果未知/过期时自动要求 fail-safe 全速监测；
+- 三点稳定基准、五点中值、Q8 EMA、水位变化/变化率和本地报警均在设备计算；
+- 每 500 ms 生成一帧本地遥测，即使传感器故障也持续生成诚实的故障帧；
+- NVS 预留遥测序号段，设备重启后跳过未用尾段，避免 Collection 序号重复 409；
 - Wi-Fi 重连与 HTTP POST 在 Core 0 的独立 FreeRTOS 任务中执行；
 - 遥测队列满时丢弃最旧项、保留最新项，绝不等待网络；
 - 普通遥测最多每 2 秒上传一次，报警等级变化立即尝试上传；仿真采集会话
-  活动时改为 500 ms，始终只保留并上传最新完整 `$TEL`；
+  活动时改为 500 ms，始终只保留并上传最新本地帧；
 - HTTP 失败按 5 s、10 s、30 s、60 s 退避；
-- 每秒向 STM32 返回 `$NET,<wifi>,<server>,<rssi>,<unix_time>*<checksum>`；
 - 服务器只有成功接收一次 2xx POST 后才标记为在线。
 
 POST 地址为 `<SERVER_BASE_URL>/api/v1/telemetry`，JSON 字段与根 README 一致。
@@ -103,18 +140,18 @@ POST 地址为 `<SERVER_BASE_URL>/api/v1/telemetry`，JSON 字段与根 README �
 全球搜索和板上 Wi-Fi 配置：
 
 - 左侧显示未来 6 小时研究风险等级与 `MODEL CONFIDENCE`；
-- 右侧显示浪高/浪周期、风速、STM32 实时超声距离/相对水位变化与本地报警等级；
-- 超声卡直接使用最新 `$TEL`：有效距离为 20--4000 mm；有新鲜 TEL 但暂时没有
-  有效回波时显示 `SEARCHING ECHO`，超过 2.5 秒没有 TEL 才显示
-  `STM32 LINK OFFLINE`。两种状态都不会退回网络海况或伪造实时数值；
+- 右侧显示浪高/浪周期、风速、ESP32 实时超声距离/相对水位变化与本地报警等级；
+- 超声卡直接使用最新本地帧：有效距离为 20--4000 mm；暂时没有有效回波时
+  显示 `SEARCHING ECHO`，超过 2.5 秒没有本地发布才显示
+  `SENSOR RUNTIME OFFLINE`。两种状态都不会退回网络海况或伪造实时数值；
 - `WEATHER` 进入天气详情，天气页右上角 `RISK` 返回风险概览；
 - `MODELS` 进入服务器模型库；风险页底栏继续显示 `/risk` 返回的实际
   `model_version`，模型库显示服务器选中的 `display_name`；
 - `WIFI` 进入原有板上联网流程，天气卡仍可打开地点选择；
-- 风险接口尚无 STM32 遥测时明确显示 `NO SENSOR DATA`，不会填充演示概率；
+- 风险接口尚无设备遥测时明确显示 `NO SENSOR DATA`，不会填充演示概率；
 - `environmental_probability` 只标为模型分类置信度，不能解释为灾害发生概率；
 - `SHADOW / RESEARCH` 与 `LOCAL FIRST` 提醒用户：服务器模型只读展示，
-  不会反向控制 STM32，本地规则报警始终优先。
+  不会反向控制 ESP32 本地规则，设备本地报警始终优先。
 
 ESP32 每 10 秒读取 `<SERVER_BASE_URL>/api/v1/risk?device_id=COAST_01`。
 响应通过固定大小结构和严格字段/范围/枚举校验后才跨任务发布；HTTP 404 被视为
@@ -137,13 +174,14 @@ PUT /api/v1/device-model
 {"device_id":"COAST_01","model_id":"..."}
 ```
 
-选择成功后服务器决定后续 `/api/v1/risk` 使用哪个模型。ESP32 只显示结果，不在
-本地执行训练，也不把模型输出送回 STM32 报警链路。页面始终显示
+选择成功后服务器决定后续 `/api/v1/risk` 使用哪个模型。ESP32 不在本地执行
+训练；模型输出只能选择 OpenMV 检测采样模式，不能写入或降低 ESP32 本地报警。
+页面始终显示
 `SIMULATION / RESEARCH` 和 `LOCAL FIRST`。
 
 模型页点击 `COLLECTION` 进入超声波仿真采集页。这个页面只有 `START/STOP` 会话
-控制，不允许打标签；安全/危险时间段必须在后台网站标记。`START` 在还没有收到
-STM32 `$TEL` 时也可用，此时明确显示 `WAITING STM32`：
+控制，不允许打标签；安全/危险时间段必须在后台网站标记。`START` 在超声尚未
+建立基准时也可用，此时明确显示 `WAITING SENSOR`：
 
 ```text
 POST /api/v1/simulations/sessions
@@ -152,7 +190,7 @@ POST /api/v1/simulations/sessions
 
 启动与活动会话恢复响应必须包含 `session_id`、`state`、`started_at`和
 `sample_count`。`sample_count` 仅保存为该次服务器响应确认的
-`SERVER STORED@SYNC`，不会因本地收到 TEL 或普通 2xx 上传回复而自行猜测增长。
+`SERVER STORED@SYNC`，不会因本地产生帧或普通 2xx 上传回复而自行猜测增长。
 活动会话期间，正常遥测
 POST 额外携带：
 
@@ -160,17 +198,17 @@ POST 额外携带：
 {"simulation_session_id":"<server-issued id>"}
 ```
 
-屏幕把 STM32 `water_rise_mm` 作为第一张 `LEVEL CHANGE` 卡突出显示；
+屏幕把 ESP32 本地计算的 `water_rise_mm` 作为第一张 `LEVEL CHANGE` 卡突出显示；
 `distance_mm` 明确标为 `SENSOR GAP`，表示探头到反射面的原始间距，并不表示
 海平面或水位。风险总览也以相对变化为主值、以 `SENSOR GAP` 为辅助值。屏幕还
 显示本次 ESP32 运行在
-当前会话内观察到的 `LOCAL VALID/TEL`；这两个本地计数在恢复已有会话时从
+当前会话内观察到的 `LOCAL VALID/FRAMES`；这两个本地计数在恢复已有会话时从
 `0/0` 开始，不与服务器已存样本数混合。按
 `health_flags.bit0 + 20..4000 mm + 2.5 s 新鲜度` 判定的超声质量。无回波、
-越界或 UART 过期均会 fail-closed 显示 `NO ECHO/STALE`，不会把旧距离伪装成
+越界或本地发布过期均会 fail-closed 显示 `NO ECHO/STALE`，不会把旧距离伪装成
 有效数据。底部同时显示 `rise_rate_mm_s`、最近一次服务器上传的 HTTP 状态、
-TEL 序号和 `UPLOAD ACK` 成功/失败次数；超过 2.5 秒没有成功确认会显示
-`ACK DELAYED`。HTTP 2xx 只更新 ACK，不把尚未由会话接口重新确认的本地 TEL
+本地帧序号和 `UPLOAD ACK` 成功/失败次数；超过 2.5 秒没有成功确认会显示
+`ACK DELAYED`。HTTP 2xx 只更新 ACK，不把尚未由会话接口重新确认的本地帧
 写成“服务器已存数”。
 停止请求为：
 
@@ -193,7 +231,7 @@ GET /api/v1/simulations/sessions/active?device_id=COAST_01
 HTTP 200 使用与启动响应相同的固定大小 SessionRecord parser 恢复 open 状态及
 服务器样本数，404 表示没有活动会话。若 `START` 因已有会话返回 409，固件也会
 立即执行同一查询并接管服务器上的原 session，避免设备永久卡在启动冲突。
-所有 HTTP 工作仍在 Core 0 网络任务，UART 拆帧和本地报警不被阻塞。
+所有 HTTP 工作仍在 Core 0 网络任务，OpenMV UART、超声和本地报警不被阻塞。
 
 触控区域（800x480，左上为原点）：
 
@@ -206,7 +244,7 @@ HTTP 200 使用与启动响应相同的固定大小 SessionRecord parser 恢复 
 
 ## 主机单元测试
 
-协议、校验、环形缓冲和超长帧丢弃可以不接硬件测试：
+协议、CTL 安全映射、校验、环形缓冲和超长帧丢弃可以不接硬件测试：
 
 ```powershell
 pio test -e native
@@ -214,7 +252,8 @@ pio test -e native
 
 模型目录和会话响应的固定大小解析、未知状态/过量模型拒绝、选中模型一致性、
 Start/Stop 二次确认动作、超声质量失效策略和触控区域边界在
-`test/test_model_control`。没有主机 `gcc/g++` 时可至少用
+`test/test_model_control`；模型/组合风险隔离、fallback/stale/25 秒超时的
+fail-safe 映射在 `test/test_openmv_control`。没有主机 `gcc/g++` 时可至少用
 真实 ESP32 工具链做不烧录的编译/链接检查：
 
 ```powershell
@@ -243,7 +282,7 @@ The normal setup flow is entirely on the 800x480 touch display:
 
 Holding the board's `BOOT` button for 1.5 seconds while the firmware is running
 also opens the Wi-Fi picker. The scan and connection state machine runs only on
-the network task, so UART receive and the STM32's local alarm path keep running.
+the network task, so local sensing and deterministic alarm logic keep running.
 The password is never printed and the LCD shows only its length and mask.
 
 ## On-device global location search
@@ -280,8 +319,8 @@ screens poll UI state every 50 ms while the normal weather page remains at
 
 An empty result list is a normal response. Global search uses a separate
 12-second read timeout because geocoding may require an upstream round trip;
-the UART receive loop and STM32 local alarm path continue on separate tasks.
+local sensing and alarm logic continue without waiting for that request.
 
 已在实际 ESP32-S3 N16R8 + 800x480 触摸屏上验证扫描、板上密码输入、
-获取 IP 后保存、Wi-Fi/天气服务恢复。整机联调仍需验证 STM32 UART 接线、
-HTTP 超时期间 UART 持续收帧，以及连续运行稳定性。
+获取 IP 后保存、Wi-Fi/天气服务恢复。单板迁移仍需在安装 ECHO 电平转换器后完成
+真机测距、OpenMV 直连、HTTP 超时期间持续采集，以及长时间稳定性验收。

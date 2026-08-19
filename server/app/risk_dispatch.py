@@ -1,4 +1,4 @@
-"""Dispatch the selected server-side model without changing STM32 safety logic."""
+"""Dispatch a server model without changing ESP32-local safety logic."""
 
 from __future__ import annotations
 

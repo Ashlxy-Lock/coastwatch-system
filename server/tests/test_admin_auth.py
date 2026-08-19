@@ -72,7 +72,10 @@ def test_admin_login_page_and_backend_require_a_session(client: TestClient) -> N
     entry = client.get("/admin", follow_redirects=False)
     assert entry.status_code == 303
     assert entry.headers["location"] == "/admin/login"
-    assert client.get("/admin/login").status_code == 200
+    login_page = client.get("/admin/login")
+    assert login_page.status_code == 200
+    assert "CoastWatch Administrator Sign In" in login_page.text
+    assert '<html lang="en-GB">' in login_page.text
 
     console = client.get("/admin/console", follow_redirects=False)
     assert console.status_code == 303
@@ -126,10 +129,14 @@ def test_login_cookie_console_prefix_and_mounted_backend_state(
 
     console = client.get("/admin/console")
     assert console.status_code == 200
-    assert "海岸安全预警监控" in console.text
+    assert "CoastWatch Great Yarmouth Monitoring Console" in console.text
     assert "const ADMIN_MODE=true" in console.text
     assert 'const ADMIN_BASE="/admin"' in console.text
-    assert "/admin/api/v1/simulations/train" in console.text
+    assert "/admin/api/v1/simulations/train" not in console.text
+    assert "/admin/api/v1/official-training/runs" in console.text
+    assert "Train official model" in console.text
+    assert "/admin/api/v1/telemetry/latest?device_id=" in console.text
+    assert "/admin/api/v1/simulations/overview?device_id=" in console.text
     assert "X-CSRF-Token" in console.text
 
     telemetry = client.post(
@@ -155,10 +162,13 @@ def test_login_cookie_console_prefix_and_mounted_backend_state(
 def test_all_admin_writes_require_matching_csrf(client: TestClient) -> None:
     scenario_path = "/admin/api/v1/simulations/device-scenario"
     assert client.put(scenario_path, json={}).status_code == 401
-    assert client.delete(
-        "/admin/api/v1/simulations/sessions/sim_admin_missing",
-        params={"device_id": "COAST_01"},
-    ).status_code == 401
+    assert (
+        client.delete(
+            "/admin/api/v1/simulations/sessions/sim_admin_missing",
+            params={"device_id": "COAST_01"},
+        ).status_code
+        == 401
+    )
 
     csrf_token, _session_token = login(client)
     path = "/admin/api/v1/device-model"
@@ -223,15 +233,21 @@ def test_all_admin_writes_require_matching_csrf(client: TestClient) -> None:
     )
     assert stopped.status_code == 200
     delete_path = f"/admin/api/v1/simulations/sessions/{session_id}"
-    assert client.delete(
-        delete_path,
-        params={"device_id": "COAST_01"},
-    ).status_code == 403
-    assert client.delete(
-        delete_path,
-        params={"device_id": "COAST_01"},
-        headers={"X-CSRF-Token": "wrong"},
-    ).status_code == 403
+    assert (
+        client.delete(
+            delete_path,
+            params={"device_id": "COAST_01"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(
+            delete_path,
+            params={"device_id": "COAST_01"},
+            headers={"X-CSRF-Token": "wrong"},
+        ).status_code
+        == 403
+    )
     deleted = client.delete(
         delete_path,
         params={"device_id": "COAST_01"},

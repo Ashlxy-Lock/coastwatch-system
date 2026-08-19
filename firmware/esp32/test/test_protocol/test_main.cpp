@@ -60,11 +60,70 @@ void test_invalid_person_and_alarm_are_rejected() {
       static_cast<int>(parseTelFrame(frame, &telemetry)));
 }
 
+void test_openmv_vis_frame_is_strictly_parsed() {
+  const char *payload = "VIS,17,1,90,123,77,1";
+  char frame[96]{};
+  snprintf(frame, sizeof(frame), "$%s*%02X", payload,
+           static_cast<unsigned int>(protocolXor(payload, strlen(payload))));
+  VisionFrame vision{};
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(TelParseResult::kOk),
+                        static_cast<int>(parseVisionFrame(frame, &vision)));
+  TEST_ASSERT_EQUAL_UINT32(17U, vision.seq);
+  TEST_ASSERT_TRUE(vision.person_detected);
+  TEST_ASSERT_EQUAL_UINT8(90U, vision.score);
+  TEST_ASSERT_EQUAL_UINT16(123U, vision.center_x);
+  TEST_ASSERT_EQUAL_UINT16(77U, vision.center_y);
+  TEST_ASSERT_TRUE(vision.in_zone);
+
+  const char *invalid_payload = "VIS,18,0,1,0,0,0";
+  snprintf(frame, sizeof(frame), "$%s*%02X", invalid_payload,
+           static_cast<unsigned int>(
+               protocolXor(invalid_payload, strlen(invalid_payload))));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(TelParseResult::kOutOfRange),
+      static_cast<int>(parseVisionFrame(frame, &vision)));
+}
+
 void test_net_vector() {
   char frame[96]{};
   TEST_ASSERT_TRUE(buildNetFrame(frame, sizeof(frame), true, true, -55,
                                 1785398400U));
   TEST_ASSERT_EQUAL_STRING("$NET,1,1,-55,1785398400*7F\n", frame);
+}
+
+void test_openmv_control_vector_and_safety_relationships() {
+  char frame[64]{};
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 42U, true, true, 3U));
+  TEST_ASSERT_EQUAL_STRING("$CTL,42,1,1,3*6E\r\n", frame);
+
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 17U, true, true, 2U));
+  TEST_ASSERT_EQUAL_STRING("$CTL,17,1,1,2*6F\r\n", frame);
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 18U, false, false, 0U));
+  TEST_ASSERT_EQUAL_STRING("$CTL,18,0,0,0*62\r\n", frame);
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 19U, false, true, 2U));
+  TEST_ASSERT_EQUAL_STRING("$CTL,19,0,1,2*60\r\n", frame);
+  // A healthy live local warning can assert danger while the model diagnostic
+  // level remains safe.
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 20U, true, true, 0U));
+  TEST_ASSERT_EQUAL_STRING("$CTL,20,1,1,0*69\r\n", frame);
+
+  // Fail-safe monitoring is intentionally legal without model danger.
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 43U, false, true, 0U));
+  // Any danger and any warning/critical diagnostic level require monitoring.
+  TEST_ASSERT_FALSE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 44U, true, false, 3U));
+  TEST_ASSERT_TRUE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 45U, true, true, 1U));
+  TEST_ASSERT_FALSE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 46U, false, false, 4U));
+  TEST_ASSERT_FALSE(
+      buildOpenMvControlFrame(frame, sizeof(frame), 47U, false, false, 2U));
 }
 
 void test_ring_buffer_preserves_order_and_reports_full() {
@@ -158,7 +217,9 @@ int runProtocolTests() {
   RUN_TEST(test_signed_water_values);
   RUN_TEST(test_bad_checksum_is_rejected_without_overwrite);
   RUN_TEST(test_invalid_person_and_alarm_are_rejected);
+  RUN_TEST(test_openmv_vis_frame_is_strictly_parsed);
   RUN_TEST(test_net_vector);
+  RUN_TEST(test_openmv_control_vector_and_safety_relationships);
   RUN_TEST(test_ring_buffer_preserves_order_and_reports_full);
   RUN_TEST(test_line_reader_drops_oversize_line);
   RUN_TEST(test_ultrasonic_snapshot_requires_fresh_healthy_tel);

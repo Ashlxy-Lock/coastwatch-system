@@ -80,8 +80,8 @@ struct SimulationSnapshot {
   // this value because a 2xx response does not carry a refreshed session
   // count (and may acknowledge an idempotent retry).
   uint32_t server_stored_sample_count;
-  // TEL frames observed by this ESP32 runtime after the session snapshot was
-  // published.  These are local capture counters, not database counters.
+  // Local telemetry frames observed after the session snapshot was published.
+  // These are local capture counters, not database counters.
   uint32_t local_tel_sample_count;
   uint32_t local_valid_ultrasonic_sample_count;
   uint32_t last_sample_ms;
