@@ -6,18 +6,39 @@
 #include "app_config.h"
 #include "display.h"
 #include "network_uplink.h"
+#include "openmv_control.h"
+#include "persistent_sequence.h"
 #include "protocol.h"
 #include "ring_buffer.h"
+#include "sensor_logic.h"
 #include "touch.h"
+#include "ultrasonic_sensor.h"
 
 namespace {
 
-HardwareSerial stm32_uart(1);
+UltrasonicSensorConfig makeUltrasonicConfig() {
+  UltrasonicSensorConfig config{};
+  config.trigger_pin = app_config::kUltrasonicTriggerPin;
+  config.echo_pin = app_config::kUltrasonicEchoPin;
+  config.ping_interval_ms = 100U;
+  config.echo_quiet_ms = 50U;
+  config.echo_timeout_us = 30000U;
+  config.trigger_pulse_us = 10U;
+  config.healthy_freshness_ms = sensor_logic::config::kUltrasonicFreshMs;
+  config.minimum_distance_mm = sensor_logic::config::kDistanceMinMm;
+  config.maximum_distance_mm = sensor_logic::config::kDistanceMaxMm;
+  return config;
+}
+
+HardwareSerial openmv_uart(1);
 ByteRingBuffer<app_config::kUartRingCapacity> uart_ring;
 LineReader<app_config::kMaxFrameBytes> line_reader;
 NetworkUplink network_uplink;
 CoastalDisplay coastal_display;
 Ft5x06Touch coastal_touch;
+UltrasonicSensor ultrasonic_device(makeUltrasonicConfig());
+sensor_logic::SensorState sensor_state{};
+PersistentSequence telemetry_sequence;
 
 constexpr TouchRegion kSelectedAreaRegion{28U, 88U, 314U, 330U};
 constexpr TouchRegion kNetworkWifiHeaderRegion{450U, 15U, 130U, 38U};
@@ -33,8 +54,8 @@ constexpr uint32_t kWifiKeyFeedbackDurationMs = 650U;
 constexpr uint32_t kCollectionActionCooldownMs = 250U;
 constexpr uint32_t kStopConfirmationWindowMs = 5000U;
 constexpr uint32_t kCollectionUploadMaximumAgeMs = 2500U;
-// STM32 emits TEL every 500 ms. Five missed frames mark the dashboard value
-// offline while leaving the independent Collection page unchanged.
+// The local sensor runtime publishes every 500 ms. Five missed publications
+// mark the dashboard value offline.
 constexpr uint32_t kTelemetryDisplayMaximumAgeMs = 2500U;
 
 enum class ScreenMode : uint8_t {
@@ -55,10 +76,19 @@ enum class DisplayedWeatherPage : uint8_t {
   kEnvironment,
 };
 
-uint32_t last_net_frame_ms = 0U;
-uint32_t valid_tel_frames = 0U;
-uint32_t invalid_tel_frames = 0U;
+uint32_t valid_vision_frames = 0U;
+uint32_t invalid_vision_frames = 0U;
 uint32_t uart_overflows = 0U;
+uint32_t last_local_telemetry_ms = 0U;
+uint32_t last_openmv_control_ms = 0U;
+uint16_t openmv_control_sequence = 0U;
+bool have_logged_openmv_control = false;
+OpenMvControlDecision logged_openmv_control{};
+uint32_t fallback_local_sequence = 0U;
+bool sequence_failure_logged = false;
+UltrasonicSensorState logged_ultrasonic_state =
+    UltrasonicSensorState::kUninitialized;
+UltrasonicSensorFault logged_ultrasonic_fault = UltrasonicSensorFault::kNone;
 uint32_t last_display_poll_ms = 0U;
 bool have_displayed_environment = false;
 EnvironmentSnapshot displayed_environment{};
@@ -196,7 +226,11 @@ bool sameDisplayedTelemetry(const TelemetrySnapshot &left,
          left.telemetry_fresh == right.telemetry_fresh &&
          left.ultrasonic_available == right.ultrasonic_available &&
          left.latest.distance_mm == right.latest.distance_mm &&
-         left.latest.water_rise_mm == right.latest.water_rise_mm;
+         left.latest.water_rise_mm == right.latest.water_rise_mm &&
+         left.latest.rise_rate_mm_s == right.latest.rise_rate_mm_s &&
+         left.latest.person_detected == right.latest.person_detected &&
+         left.latest.alarm_level == right.latest.alarm_level &&
+         left.latest.health_flags == right.latest.health_flags;
 }
 
 void clearWifiPassword() {
@@ -237,46 +271,31 @@ void invalidateWifiRendering() {
   wifi_rendered_error = static_cast<WifiSetupError>(UINT8_MAX);
 }
 
-void logInvalidFrame(TelParseResult result) {
-  ++invalid_tel_frames;
-  if (invalid_tel_frames <= 5U || invalid_tel_frames % 25U == 0U) {
-    Serial.printf("[UART] dropped TEL frame reason=%s invalid_total=%lu\n",
+void logInvalidVisionFrame(TelParseResult result) {
+  ++invalid_vision_frames;
+  if (invalid_vision_frames <= 5U || invalid_vision_frames % 25U == 0U) {
+    Serial.printf("[OPENMV] dropped VIS frame reason=%s invalid_total=%lu\n",
                   telParseResultName(result),
-                  static_cast<unsigned long>(invalid_tel_frames));
+                  static_cast<unsigned long>(invalid_vision_frames));
   }
 }
 
-void processLine(const char *line) {
-  TelemetryFrame telemetry{};
-  const TelParseResult result = parseTelFrame(line, &telemetry);
+void processVisionLine(const char *line) {
+  VisionFrame vision{};
+  const TelParseResult result = parseVisionFrame(line, &vision);
   if (result != TelParseResult::kOk) {
-    logInvalidFrame(result);
+    logInvalidVisionFrame(result);
     return;
   }
 
-  ++valid_tel_frames;
-  latest_telemetry = telemetry;
-  latest_telemetry_received_ms = millis();
-  have_latest_telemetry = true;
-  Serial.printf(
-      "[UART] TEL seq=%lu distance=%lu rise=%ld rate=%ld person=%u alarm=%u "
-      "health=0x%lX\n",
-      static_cast<unsigned long>(telemetry.seq),
-      static_cast<unsigned long>(telemetry.distance_mm),
-      static_cast<long>(telemetry.water_rise_mm),
-      static_cast<long>(telemetry.rise_rate_mm_s),
-      telemetry.person_detected ? 1U : 0U,
-      static_cast<unsigned int>(telemetry.alarm_level),
-      static_cast<unsigned long>(telemetry.health_flags));
-
-  if (!network_uplink.submit(telemetry)) {
-    Serial.println("[NET] WARN telemetry queue unavailable");
-  }
+  ++valid_vision_frames;
+  sensor_logic::accept_vision(&sensor_state, millis(), vision.person_detected,
+                              vision.in_zone);
 }
 
-void pollStm32Uart() {
-  while (stm32_uart.available() > 0) {
-    const int value = stm32_uart.read();
+void pollOpenMvUart() {
+  while (openmv_uart.available() > 0) {
+    const int value = openmv_uart.read();
     if (value < 0) {
       break;
     }
@@ -284,7 +303,7 @@ void pollStm32Uart() {
       ++uart_overflows;
       uart_ring.clear();
       line_reader.discardUntilNewline();
-      Serial.printf("[UART] ERROR RX ring overflow total=%lu\n",
+      Serial.printf("[OPENMV] ERROR RX ring overflow total=%lu\n",
                     static_cast<unsigned long>(uart_overflows));
     }
   }
@@ -294,36 +313,175 @@ void pollStm32Uart() {
     const char *line = nullptr;
     const LineEvent event = line_reader.push(static_cast<char>(value), &line);
     if (event == LineEvent::kReady) {
-      processLine(line);
+      processVisionLine(line);
     } else if (event == LineEvent::kDroppedOversize) {
-      ++invalid_tel_frames;
-      Serial.printf("[UART] dropped frame longer than %u bytes\n",
+      ++invalid_vision_frames;
+      Serial.printf("[OPENMV] dropped frame longer than %u bytes\n",
                     static_cast<unsigned int>(app_config::kMaxFrameBytes));
     }
   }
 }
 
-void sendNetFrameIfDue() {
-  const uint32_t now_ms = millis();
-  if (static_cast<uint32_t>(now_ms - last_net_frame_ms) <
-      app_config::kNetFrameIntervalMs) {
+void pollUltrasonicSensor(uint32_t now_ms) {
+  if (!app_config::kUltrasonicEchoLevelShiftVerified) {
     return;
   }
-  last_net_frame_ms = now_ms;
 
-  const NetworkStatus status = network_uplink.status();
-  char frame[96]{};
-  if (!buildNetFrame(frame, sizeof(frame), status.wifi_connected,
-                     status.server_reachable, status.rssi, status.unix_time)) {
-    Serial.println("[NET] ERROR failed to build NET frame");
+  const UltrasonicSensorResult result = ultrasonic_device.poll();
+  if (result.event == UltrasonicSensorEvent::kSample) {
+    (void)sensor_logic::accept_distance(&sensor_state, now_ms,
+                                        result.distance_mm);
+  } else if (result.event == UltrasonicSensorEvent::kTimeout ||
+             result.event == UltrasonicSensorEvent::kOutOfRange) {
+    sensor_logic::note_timeout(&sensor_state, now_ms);
+  } else if (result.event == UltrasonicSensorEvent::kFault) {
+    sensor_logic::note_hardware_fault(&sensor_state);
+  }
+
+  if (result.state != logged_ultrasonic_state ||
+      result.fault != logged_ultrasonic_fault) {
+    logged_ultrasonic_state = result.state;
+    logged_ultrasonic_fault = result.fault;
+    Serial.printf("[ULTRASONIC] state=%u fault=%u armed=%u healthy=%u\n",
+                  static_cast<unsigned>(result.state),
+                  static_cast<unsigned>(result.fault), result.armed ? 1U : 0U,
+                  result.healthy ? 1U : 0U);
+  }
+}
+
+bool sameOpenMvControl(const OpenMvControlDecision &left,
+                       const OpenMvControlDecision &right) {
+  return left.trusted_model_result == right.trusted_model_result &&
+         left.fail_safe == right.fail_safe &&
+         left.green_safe == right.green_safe &&
+         left.model_danger == right.model_danger &&
+         left.local_water_danger == right.local_water_danger &&
+         left.danger == right.danger &&
+         left.person_enable == right.person_enable &&
+         left.environmental_level == right.environmental_level;
+}
+
+void sendOpenMvControlIfDue(uint32_t now_ms) {
+  if (static_cast<uint32_t>(now_ms - last_openmv_control_ms) <
+      app_config::kOpenMvControlIntervalMs) {
     return;
   }
-  stm32_uart.print(frame);
-  Serial.printf("[NET] tx wifi=%u server=%u rssi=%ld unix=%lu\n",
-                status.wifi_connected ? 1U : 0U,
-                status.server_reachable ? 1U : 0U,
-                static_cast<long>(status.rssi),
-                static_cast<unsigned long>(status.unix_time));
+  last_openmv_control_ms = now_ms;
+
+  const RiskSnapshot risk = network_uplink.risk();
+  const RiskFetchStatus status = network_uplink.riskStatus();
+  // publishLocalTelemetryIfDue() runs immediately before this function and
+  // publishes the ESP32's current local alarm. The server's
+  // RiskSnapshot::local_alarm_level is an asynchronous echo and can lag a
+  // real local warning by multiple polling intervals.
+  const uint8_t live_local_alarm_level =
+      have_latest_telemetry
+          ? latest_telemetry.alarm_level
+          : static_cast<uint8_t>(sensor_logic::AlarmLevel::kFault);
+  const bool live_ultrasonic_health_ok =
+      have_latest_telemetry &&
+      (latest_telemetry.health_flags & sensor_logic::kHealthUltrasonicOk) !=
+          0U;
+  const bool live_openmv_health_ok =
+      have_latest_telemetry &&
+      (latest_telemetry.health_flags & sensor_logic::kHealthOpenMvOk) != 0U;
+  const OpenMvControlDecision decision = decideOpenMvControl(
+      risk, status.availability == RiskAvailability::kReady,
+      live_local_alarm_level,
+      have_latest_telemetry ? latest_telemetry.water_rise_mm : 0,
+      have_latest_telemetry ? latest_telemetry.rise_rate_mm_s : 0,
+      live_ultrasonic_health_ok,
+      live_openmv_health_ok, now_ms,
+      app_config::kOpenMvRiskMaximumAgeMs);
+
+  char frame[64]{};
+  if (!buildOpenMvControlFrame(
+          frame, sizeof(frame), openmv_control_sequence, decision.danger,
+          decision.person_enable, decision.environmental_level)) {
+    Serial.println("[OPENMV] ERROR failed to build CTL frame");
+    return;
+  }
+
+  const size_t frame_length = std::strlen(frame);
+  const size_t written = openmv_uart.write(
+      reinterpret_cast<const uint8_t *>(frame), frame_length);
+  if (written != frame_length) {
+    Serial.printf("[OPENMV] ERROR partial CTL write=%u/%u\n",
+                  static_cast<unsigned>(written),
+                  static_cast<unsigned>(frame_length));
+    return;
+  }
+  ++openmv_control_sequence;
+
+  if (!have_logged_openmv_control ||
+      !sameOpenMvControl(decision, logged_openmv_control)) {
+    Serial.printf(
+        "[OPENMV] CTL model_trusted=%u fail_safe=%u green_safe=%u "
+        "model_danger=%u water_danger=%u danger=%u person_enable=%u "
+        "environmental_level=%u\n",
+        decision.trusted_model_result ? 1U : 0U,
+        decision.fail_safe ? 1U : 0U, decision.green_safe ? 1U : 0U,
+        decision.model_danger ? 1U : 0U,
+        decision.local_water_danger ? 1U : 0U,
+        decision.danger ? 1U : 0U,
+        decision.person_enable ? 1U : 0U,
+        static_cast<unsigned>(decision.environmental_level));
+    logged_openmv_control = decision;
+    have_logged_openmv_control = true;
+  }
+}
+
+void publishLocalTelemetryIfDue(uint32_t now_ms) {
+  if (static_cast<uint32_t>(now_ms - last_local_telemetry_ms) <
+      app_config::kLocalTelemetryPeriodMs) {
+    return;
+  }
+  last_local_telemetry_ms = now_ms;
+
+  const NetworkStatus network = network_uplink.status();
+  sensor_logic::accept_network(&sensor_state, now_ms,
+                               network.wifi_connected,
+                               network.server_reachable);
+  sensor_logic::tick(&sensor_state, now_ms);
+
+  uint32_t sequence = fallback_local_sequence++;
+  const bool sequence_is_persistent = telemetry_sequence.next(&sequence);
+  const TelemetryFrame telemetry =
+      sensor_logic::snapshot(sensor_state, now_ms, sequence);
+  latest_telemetry = telemetry;
+  latest_telemetry_received_ms = now_ms;
+  have_latest_telemetry = true;
+
+  Serial.printf(
+      "[LOCAL] TEL seq=%lu distance=%lu rise=%ld rate=%ld person=%u "
+      "alarm=%u health=0x%lX\n",
+      static_cast<unsigned long>(telemetry.seq),
+      static_cast<unsigned long>(telemetry.distance_mm),
+      static_cast<long>(telemetry.water_rise_mm),
+      static_cast<long>(telemetry.rise_rate_mm_s),
+      telemetry.person_detected ? 1U : 0U,
+      static_cast<unsigned>(telemetry.alarm_level),
+      static_cast<unsigned long>(telemetry.health_flags));
+
+  if (!sequence_is_persistent) {
+    if (!sequence_failure_logged) {
+      sequence_failure_logged = true;
+      Serial.println(
+          "[LOCAL] ERROR NVS sequence unavailable; server upload disabled");
+    }
+    return;
+  }
+  if (!network_uplink.submit(telemetry)) {
+    Serial.println("[NET] WARN telemetry queue unavailable");
+  }
+}
+
+void pollLocalSensorRuntime() {
+  const uint32_t now_ms = millis();
+  pollOpenMvUart();
+  pollUltrasonicSensor(now_ms);
+  publishLocalTelemetryIfDue(now_ms);
+  sendOpenMvControlIfDue(now_ms);
 }
 
 void refreshDisplayIfNeeded() {
@@ -1381,11 +1539,26 @@ void setup() {
   Serial.begin(app_config::kDebugBaud);
   pinMode(kBootButtonPin, INPUT_PULLUP);
   Serial.println();
-  Serial.println("[BOOT] Coastal Warning ESP32-S3 network gateway");
-  Serial.printf("[BOOT] STM32 UART1 RX=GPIO%d TX=GPIO%d baud=%lu 8N1\n",
-                app_config::kStm32UartRxPin, app_config::kStm32UartTxPin,
-                static_cast<unsigned long>(app_config::kStm32UartBaud));
-  Serial.println("[BOOT] ESP32 does not make or gate local alarm decisions");
+  Serial.println("[BOOT] Coastal Warning ESP32-S3 single-board controller");
+  Serial.printf("[BOOT] OpenMV UART1 RX=GPIO%d TX=GPIO%d baud=%lu 8N1\n",
+                app_config::kOpenMvUartRxPin,
+                app_config::kOpenMvUartTxPin,
+                static_cast<unsigned long>(app_config::kOpenMvUartBaud));
+  Serial.printf("[BOOT] ultrasonic TRIG=GPIO%d ECHO=GPIO%d level_shift=%u\n",
+                app_config::kUltrasonicTriggerPin,
+                app_config::kUltrasonicEchoPin,
+                app_config::kUltrasonicEchoLevelShiftVerified ? 1U : 0U);
+  Serial.println(
+      "[BOOT] deterministic local alarm is owned by this ESP32; remote "
+      "models may request OpenMV monitoring but cannot replace local rules");
+
+  sensor_logic::reset(&sensor_state);
+  if (!telemetry_sequence.begin()) {
+    sequence_failure_logged = true;
+    Serial.println(
+        "[BOOT] ERROR persistent telemetry sequence unavailable; uploads "
+        "will stay disabled");
+  }
 
   if (coastal_display.begin()) {
     const NetworkStatus status = network_uplink.status();
@@ -1407,21 +1580,34 @@ void setup() {
     Serial.println("[BOOT] touch unavailable; display/network continue");
   }
 
-  stm32_uart.setRxBufferSize(app_config::kUartHardwareRxBufferBytes);
-  stm32_uart.begin(app_config::kStm32UartBaud, SERIAL_8N1,
-                   app_config::kStm32UartRxPin,
-                   app_config::kStm32UartTxPin);
+  openmv_uart.setRxBufferSize(app_config::kUartHardwareRxBufferBytes);
+  openmv_uart.begin(app_config::kOpenMvUartBaud, SERIAL_8N1,
+                    app_config::kOpenMvUartRxPin,
+                    app_config::kOpenMvUartTxPin);
+
+  if (app_config::kUltrasonicEchoLevelShiftVerified) {
+    const UltrasonicSensorResult ultrasonic = ultrasonic_device.begin();
+    if (ultrasonic.fault != UltrasonicSensorFault::kNone) {
+      sensor_logic::note_hardware_fault(&sensor_state);
+      Serial.printf("[BOOT] ultrasonic initialization fault=%u\n",
+                    static_cast<unsigned>(ultrasonic.fault));
+    }
+  } else {
+    Serial.println(
+        "[BOOT] ultrasonic disabled: install and verify 5V->3.3V ECHO "
+        "conversion, then set ULTRASONIC_ECHO_LEVEL_SHIFT_VERIFIED=1");
+  }
 
   if (!network_uplink.begin()) {
-    Serial.println("[BOOT] network worker unavailable; UART remains active");
+    Serial.println(
+        "[BOOT] network worker unavailable; local sensing/display continue");
   }
 }
 
 void loop() {
-  pollStm32Uart();
+  pollLocalSensorRuntime();
   pollTouch();
   pollBootButton();
-  sendNetFrameIfDue();
   refreshDisplayIfNeeded();
   yield();
 }

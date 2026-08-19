@@ -15,7 +15,8 @@ struct TelemetryFrame {
 
 // Keep the LCD meaning explicit and testable.  distance_mm is the physical
 // sensor-to-target gap; water_rise_mm is the relative level change from the
-// reference established by the STM32.  Presenting these through named fields
+// reference established by the local ESP32 sensor runtime. Presenting these
+// through named fields
 // avoids accidentally promoting the raw gap as a water/sea level again.
 namespace ultrasonic_ui {
 
@@ -33,10 +34,10 @@ constexpr Presentation presentation(const TelemetryFrame &telemetry) {
 
 }  // namespace ultrasonic_ui
 
-// STM32 health_flags bit 0 is the authoritative indication that the
-// ultrasonic value in a TEL frame is valid.  Keep the received timestamp on
-// the ESP32 as well: a formerly healthy value must never stay visible after
-// the UART stream stops.
+// health_flags bit 0 is the authoritative indication that the ultrasonic
+// value in a locally generated or legacy TEL frame is valid. Keep the
+// publication timestamp as well: a formerly healthy value must never remain
+// visible if the local sensor runtime stops publishing.
 constexpr uint32_t kTelemetryHealthUltrasonicOk = 1U << 0U;
 constexpr uint32_t kTelemetryUltrasonicMinimumMm = 20U;
 constexpr uint32_t kTelemetryUltrasonicMaximumMm = 4000U;

@@ -648,7 +648,7 @@ bool NetworkUplink::submit(const TelemetryFrame &telemetry) {
     return true;
   }
 
-  // Preserve the freshest telemetry instead of blocking the UART loop.
+  // Preserve the freshest telemetry instead of blocking local sensing.
   TelemetryFrame discarded{};
   xQueueReceive(queue_, &discarded, 0U);
   return xQueueSend(queue_, &telemetry, 0U) == pdTRUE;
@@ -1181,7 +1181,7 @@ void NetworkUplink::taskLoop() {
 
   Serial.printf(
       "[WIFI] configuration: %s source=%s\n",
-      wifi_configured ? "present" : "not set (UART-only mode)",
+      wifi_configured ? "present" : "not set (offline local mode)",
       wifi_configuration_source);
   Serial.printf("[HTTP] server: %s\n",
                 server_configured ? app_config::kServerBaseUrl
@@ -1892,7 +1892,7 @@ void NetworkUplink::taskLoop() {
       environment_reachable = false;
       markEnvironmentStale();
       markRiskStale(RiskAvailability::kUnavailable, 0);
-      Serial.println("[WIFI] disconnected; UART gateway remains active");
+      Serial.println("[WIFI] disconnected; local sensing remains active");
     }
     was_connected = connected;
 
@@ -2320,7 +2320,7 @@ void NetworkUplink::taskLoop() {
         server_reachable = true;
         risk_retry_index = 0U;
         next_risk_attempt_ms = now_ms + app_config::kRiskNoTelemetryRetryMs;
-        Serial.println("[RISK] waiting for first STM32 telemetry");
+        Serial.println("[RISK] waiting for first device telemetry");
       } else {
         markRiskStale(RiskAvailability::kUnavailable, http_status);
         const uint32_t backoff_ms = nextBackoff(&risk_retry_index);

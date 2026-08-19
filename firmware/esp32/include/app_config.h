@@ -11,7 +11,8 @@
 #include "tunnel_secret.h"
 #endif
 
-// Empty values intentionally keep UART bring-up available without Wi-Fi.
+// Empty values intentionally keep local sensing/display available without
+// Wi-Fi.
 #ifndef WIFI_SSID
 #define WIFI_SSID ""
 #endif
@@ -32,6 +33,14 @@
 #define DEVICE_ID "COAST_01"
 #endif
 
+// This must be explicitly enabled in the ignored local secrets.h only after
+// a physical 5 V -> 3.3 V ECHO divider/level shifter has been installed and
+// checked. Keeping the default at 0 makes an accidental firmware flash leave
+// the ultrasonic pins unclaimed.
+#ifndef ULTRASONIC_ECHO_LEVEL_SHIFT_VERIFIED
+#define ULTRASONIC_ECHO_LEVEL_SHIFT_VERIFIED 0
+#endif
+
 namespace app_config {
 
 // USB serial console.
@@ -46,15 +55,29 @@ constexpr uint8_t kTouchI2cAddress = 0x38;
 // below the controller's 400 kHz maximum for better margin on the adapter.
 constexpr uint32_t kTouchI2cClockHz = 100000U;
 
-// Dedicated STM32 link on ESP32-S3 UART1.
-// GPIO8 is exposed, is not a boot strap, and is unused by the 8-bit LCD/touch
-// wiring. Do not move RX back to GPIO12: the panel drives TOUCH_INT there.
-constexpr int kStm32UartRxPin = 8;
-constexpr int kStm32UartTxPin = 14;
-constexpr uint32_t kStm32UartBaud = 115200;
+// OpenMV VIS input and CTL output on ESP32-S3 UART1. P4/TX connects to
+// GPIO8/RX; P5/RX connects to GPIO14/TX.
+// GPIO12 remains reserved by the panel's TOUCH_INT connection.
+constexpr int kOpenMvUartRxPin = 8;
+constexpr int kOpenMvUartTxPin = 14;
+constexpr uint32_t kOpenMvUartBaud = 115200;
 constexpr size_t kUartHardwareRxBufferBytes = 512;
 constexpr size_t kUartRingCapacity = 512;
 constexpr size_t kMaxFrameBytes = 160;
+constexpr uint32_t kOpenMvControlIntervalMs = 500U;
+// The risk endpoint normally refreshes every 10 seconds. More than 25 seconds
+// without a fresh result switches OpenMV to fail-safe full-rate monitoring.
+constexpr uint32_t kOpenMvRiskMaximumAgeMs = 25U * 1000U;
+
+// Single-board ultrasonic input. GPIO42 is reserved by the LCD D/C signal;
+// the nearby free GPIO40 receives the divided ECHO signal. HC-SR04 ECHO is
+// 5 V and MUST reach GPIO40 only through a verified 5 V -> 3.3 V divider or
+// level shifter. No ESP32-S3 GPIO is 5 V tolerant.
+constexpr int kUltrasonicTriggerPin = 10;
+constexpr int kUltrasonicEchoPin = 40;
+constexpr bool kUltrasonicEchoLevelShiftVerified =
+    ULTRASONIC_ECHO_LEVEL_SHIFT_VERIFIED == 1;
+constexpr uint32_t kLocalTelemetryPeriodMs = 500U;
 
 constexpr const char *kWifiSsid = WIFI_SSID;
 constexpr const char *kWifiPassword = WIFI_PASSWORD;
@@ -77,13 +100,13 @@ constexpr const char *kDeviceLocationPath = "/api/v1/device-location";
 constexpr uint32_t kNetFrameIntervalMs = 1000;
 constexpr uint32_t kTelemetryUploadIntervalMs = 2000;
 // Simulation collection is deliberately faster, but still uploads only the
-// freshest complete STM32 frame. UART parsing never waits for this cadence.
+// freshest complete local sensor frame. Sensing never waits for this cadence.
 constexpr uint32_t kSimulationTelemetryUploadIntervalMs = 500;
 // A short poll makes a region selected on the web page appear on the LCD
 // promptly. The server owns the slower upstream weather-provider cache.
 constexpr uint32_t kEnvironmentRefreshIntervalMs = 30U * 1000U;
 // Risk remains a research-only, read-only display channel. It must never feed
-// the STM32 local alarm path. Poll a little faster than environment data so a
+// the ESP32 local alarm path. Poll a little faster than environment data so a
 // freshly uploaded local alarm is reflected on the overview without turning
 // the public gateway into a high-frequency stream.
 constexpr uint32_t kRiskRefreshIntervalMs = 10U * 1000U;

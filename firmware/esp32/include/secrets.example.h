@@ -12,3 +12,8 @@
 // Required when SERVER_BASE_URL points at the public Tunnel gateway.
 // Keep the real value in include/tunnel_secret.h, which is ignored by Git.
 #define DEVICE_TOKEN "YOUR_RANDOM_DEVICE_TOKEN"
+
+// Change to 1 only after HC-SR04 ECHO has a verified 5 V -> 3.3 V divider or
+// level-shifter. ESP32-S3 has no 5 V-tolerant GPIO. The safe default leaves
+// TRIG/ECHO disabled.
+#define ULTRASONIC_ECHO_LEVEL_SHIFT_VERIFIED 0

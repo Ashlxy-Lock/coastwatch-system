@@ -1,4 +1,4 @@
-s"""First-connection probe for MV4/OpenMV H7 Plus.
+"""First-connection probe for MV4/OpenMV H7 Plus.
 
 Open this single file in OpenMV IDE and press Run. It does not write to flash,
 upgrade firmware, or use the hardware UART.
@@ -32,4 +32,3 @@ while True:
             % (frame.width(), frame.height(), clock.fps())
         )
         last_report_ms = now_ms
-

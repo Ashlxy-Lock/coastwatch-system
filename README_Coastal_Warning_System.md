@@ -1,4 +1,11 @@
-# STM32 + OpenMV + ESP32 海岸智能预警系统
+# CoastWatch 海岸智能预警系统
+
+> **2026-08-18 架构更新：** 主控已切换为 OpenMV + ESP32-S3，STM32 进入
+> 回滚/对照状态。ESP32 直接完成超声、基线/滤波、本地规则、LCD/触摸和联网。
+> HC-SR04 ECHO 已通过 5 个 220Ω 电阻分压后接入 GPIO40；单板固件已烧录并验证
+> 超声、OpenMV、LCD、Wi-Fi、服务器上传和研究风险返回。权威迁移说明见
+> `docs/ESP32_SINGLE_BOARD_MIGRATION.md`；本文后续 STM32 章节保留为原始设计与
+> 可回滚实现记录。
 
 > 英文标题：**An STM32-Based Intelligent Coastal Safety Warning System Using OpenMV and Ultrasonic Sensing**
 
