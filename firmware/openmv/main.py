@@ -151,6 +151,7 @@ def run():
     clock = time.clock()
     frame_size_verified = False
     last_result = (0, 0, 0, 0, 0, None)
+    last_alert_person = False
     last_control_mode = None
     last_status_led_mode = control.STATUS_OFF
     last_danger_led_output = False
@@ -194,7 +195,8 @@ def run():
                     )
                 frame_size_verified = True
 
-            last_result = detector.detect(frame)
+            last_result = detector.detect(frame, alert_mode=effective_alert)
+            last_alert_person = detector.alert_person_present()
             last_detection_ms = now_ms
 
             if config.DEBUG_DRAW:
@@ -202,7 +204,7 @@ def run():
 
         now_ms = time.ticks_ms()
         status_led_mode = control.status_led_mode(
-            control_state, last_result[0], now_ms, time.ticks_diff
+            control_state, last_alert_person, now_ms, time.ticks_diff
         )
         danger_phase_on = danger_blink.update(
             status_led_mode == control.STATUS_ALERT_RED,
@@ -269,7 +271,15 @@ def run():
             and time.ticks_diff(now_ms, last_fps_ms)
             >= config.DEBUG_PRINT_FPS_EVERY_MS
         ):
-            print("FPS=%.2f" % clock.fps())
+            print(
+                "VISION_SCORE raw=%d vis_person=%d alert_person=%d FPS=%.2f"
+                % (
+                    last_result[1],
+                    last_result[0],
+                    1 if last_alert_person else 0,
+                    clock.fps(),
+                )
+            )
             last_fps_ms = now_ms
 
         if not detection_due:

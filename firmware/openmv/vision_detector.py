@@ -156,6 +156,74 @@ class _ScoreHysteresis:
         return self.present
 
 
+class _AlertPersonFilter:
+    """High-recall vote used only for the local warning-status LED.
+
+    This state is intentionally separate from ``_ScoreHysteresis``.  The
+    conservative classifier result continues to drive VIS and the ESP32 local
+    alarm, while this filter may turn a yellow warning indication red when a
+    person is very likely present under the actual bench lighting.
+    """
+
+    def __init__(
+        self,
+        enter_threshold,
+        exit_threshold,
+        window_frames,
+        required_hits,
+        exit_frames,
+    ):
+        if window_frames <= 0:
+            raise ValueError("window_frames must be positive")
+        if required_hits <= 0 or required_hits > window_frames:
+            raise ValueError("required_hits must fit inside window_frames")
+        if exit_frames <= 0:
+            raise ValueError("exit_frames must be positive")
+        self.enter_threshold = enter_threshold
+        self.exit_threshold = exit_threshold
+        self.window_frames = window_frames
+        self.required_hits = required_hits
+        self.exit_frames = exit_frames
+        self.reset()
+
+    def reset(self):
+        self.present = False
+        self._recent_hits = []
+        self._exit_count = 0
+
+    def update(self, score, enabled):
+        if not enabled:
+            self.reset()
+            return False
+
+        if not self.present:
+            self._exit_count = 0
+            self._recent_hits.append(score >= self.enter_threshold)
+            if len(self._recent_hits) > self.window_frames:
+                self._recent_hits.pop(0)
+            hits = 0
+            for hit in self._recent_hits:
+                if hit:
+                    hits += 1
+            if (
+                len(self._recent_hits) == self.window_frames
+                and hits >= self.required_hits
+            ):
+                self.present = True
+                self._recent_hits = []
+        else:
+            self._recent_hits = []
+            if score < self.exit_threshold:
+                self._exit_count += 1
+                if self._exit_count >= self.exit_frames:
+                    self.present = False
+                    self._exit_count = 0
+            else:
+                self._exit_count = 0
+
+        return self.present
+
+
 class PersonClassifierDetector:
     """Whole-frame person presence using the firmware-bundled TFLite model."""
 
@@ -174,26 +242,42 @@ class PersonClassifierDetector:
             config.TARGET_ENTER_FRAMES,
             config.TARGET_EXIT_FRAMES,
         )
+        self._alert_filter = _AlertPersonFilter(
+            config.ALERT_PERSON_ENTER_THRESHOLD,
+            config.ALERT_PERSON_EXIT_THRESHOLD,
+            config.ALERT_PERSON_WINDOW_FRAMES,
+            config.ALERT_PERSON_REQUIRED_HITS,
+            config.ALERT_PERSON_EXIT_FRAMES,
+        )
+        self._alert_person_present = False
 
         labels = self._model.labels
         if labels is not None and config.PERSON_CLASS_INDEX >= len(labels):
             raise RuntimeError("person class index exceeds model labels")
 
-    def detect(self, frame):
+    def detect(self, frame, alert_mode=False):
         scores = self._model.predict([frame])[0].flatten().tolist()
         if config.PERSON_CLASS_INDEX >= len(scores):
             raise RuntimeError("person class index exceeds model output")
 
         raw_score = float(scores[config.PERSON_CLASS_INDEX])
         present = self._filter.update(raw_score)
-        if not present:
-            return (0, 0, 0, 0, 0, None)
-
+        self._alert_person_present = self._alert_filter.update(
+            raw_score, bool(alert_mode)
+        )
         score = max(0, min(100, int(round(raw_score * 100))))
+        if not present:
+            # Preserve the genuine score for the IDE overlay and calibration.
+            # encode_vis() still forces all target-dependent wire fields to
+            # zero when detected=0, so this cannot alter ESP32 alarm semantics.
+            return (0, score, 0, 0, 0, None)
 
         # This is a whole-frame classifier, so a body coordinate is not
         # available. The full camera view is the warning region by definition.
         return (1, score, 0, 0, 1, None)
+
+    def alert_person_present(self):
+        return self._alert_person_present
 
 
 class FaceDetector:
@@ -217,7 +301,7 @@ class FaceDetector:
                 last_error = error
         raise RuntimeError("unable to load frontal-face cascade: " + str(last_error))
 
-    def detect(self, frame):
+    def detect(self, frame, alert_mode=False):
         objects = frame.find_features(
             self._cascade,
             config.FACE_THRESHOLD,
@@ -261,6 +345,9 @@ class FaceDetector:
         stable = self._filter.update(True, score, cx, cy, raw_zone)
         return stable + (selected,)
 
+    def alert_person_present(self):
+        return self._filter.present
+
 
 class ColorMarkerDetector:
     mode_name = config.MODE_COLOR_MARKER_DEMO
@@ -269,7 +356,7 @@ class ColorMarkerDetector:
         _validate_rois()
         self._filter = _StableTargetFilter()
 
-    def detect(self, frame):
+    def detect(self, frame, alert_mode=False):
         blobs = frame.find_blobs(
             [config.COLOR_THRESHOLD],
             roi=config.MONITOR_ROI,
@@ -307,6 +394,9 @@ class ColorMarkerDetector:
         score = _area_score(selected_pixels, config.MONITOR_ROI)
         stable = self._filter.update(True, score, cx, cy, raw_zone)
         return stable + (selected.rect(),)
+
+    def alert_person_present(self):
+        return self._filter.present
 
 
 def create_detector():

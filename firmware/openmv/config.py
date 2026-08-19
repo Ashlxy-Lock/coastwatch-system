@@ -46,6 +46,18 @@ PERSON_CLASS_INDEX = 1
 PERSON_ENTER_THRESHOLD = 0.65
 PERSON_EXIT_THRESHOLD = 0.58
 
+# The VIS/telemetry decision above stays deliberately conservative because it
+# feeds the ESP32 local alarm.  The status LED has a separate, alert-only
+# high-recall decision: on the connected bench, a real person scored
+# 0.5508..0.6445 while the earlier empty-scene calibration topped out near
+# 0.46.  Two hits in a three-frame window tolerate one dim/blurred frame without
+# letting the more sensitive indication leak into VIS or model-training data.
+ALERT_PERSON_ENTER_THRESHOLD = 0.54
+ALERT_PERSON_EXIT_THRESHOLD = 0.50
+ALERT_PERSON_WINDOW_FRAMES = 3
+ALERT_PERSON_REQUIRED_HITS = 2
+ALERT_PERSON_EXIT_FRAMES = 5
+
 # Built-in Haar face detector. The two names cover the local 4.7/4.8 examples.
 FACE_CASCADE_PATHS = (
     "/rom/haarcascade_frontalface.cascade",
